@@ -1,0 +1,40 @@
+name: research-agent
+description: "Researches topics and produces cited summaries"
+
+provider: anthropic
+model: claude-sonnet-4-20250514
+
+system_prompt: |
+  You are a research assistant. When given a topic:
+  1. Search the web for relevant, recent information
+  2. Read the most promising sources
+  3. Produce a clear, well-organized summary with citations
+  
+  Always cite your sources. If you're unsure about something, say so.
+
+skills:
+  - web_search:
+      backend: ddg
+      max_results: 10
+  - web_fetch
+  - summarize
+
+tools:
+  core:
+    read_file: {}
+    list_dir: {}
+    grep: {}
+    http_fetch: {}
+    # bash not listed = disabled (read-only agent)
+
+max_turns: 15
+timeout_seconds: 300
+
+context:
+  strategy: compaction
+  compaction_threshold: 0.8
+
+output:
+  stream: true
+  format: text
+  color: auto

@@ -1,0 +1,43 @@
+name: dev-agent
+description: "Coding assistant with full shell and GitHub access"
+
+provider: anthropic
+model: claude-sonnet-4-20250514
+
+system_prompt: |
+  You are a senior software engineer. Help the user with coding tasks:
+  reading code, writing code, debugging, refactoring, and code review.
+  
+  Always read the relevant code before making changes. Use edit_file
+  for small changes and write_file for new files. Run tests after
+  making changes when possible.
+
+skills:
+  - github
+
+tools:
+  core:
+    bash:
+      timeout_seconds: 60
+    read_file: {}
+    write_file: {}
+    edit_file: {}
+    list_dir: {}
+    grep: {}
+    http_fetch: {}
+
+max_turns: 30
+timeout_seconds: 600
+
+context:
+  strategy: compaction
+  compaction_threshold: 0.8
+
+approval:
+  policy: list
+  required_tools: []  # trust bash for dev agents
+
+output:
+  stream: true
+  format: text
+  color: auto

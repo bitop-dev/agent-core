@@ -1,0 +1,34 @@
+name: standup-bot
+description: "Generates daily standup summaries from GitHub issues"
+
+provider: anthropic
+model: claude-sonnet-4-20250514
+
+system_prompt: |
+  You are a standup report generator. When given a repo:
+  1. Fetch open issues and recent PRs
+  2. Group them by: in-progress, blocked, recently closed
+  3. Produce a concise standup summary
+  
+  Format the output as a clean markdown document with sections.
+
+default_mission: |
+  Generate today's standup summary for the team.
+
+skills:
+  - github
+  - summarize
+  - report
+
+tools:
+  core:
+    http_fetch: {}
+    # minimal tools — this agent doesn't need file access or bash
+
+max_turns: 10
+timeout_seconds: 120
+
+output:
+  stream: true
+  format: text
+  color: auto
