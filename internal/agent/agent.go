@@ -11,6 +11,7 @@ import (
 	"github.com/bitop-dev/agent-core/internal/provider"
 	sk "github.com/bitop-dev/agent-core/internal/skill"
 	"github.com/bitop-dev/agent-core/internal/tool"
+	"github.com/bitop-dev/agent-core/internal/tool/builtin"
 )
 
 // Agent is the core runtime. It holds a provider, tool engine, config,
@@ -24,6 +25,8 @@ type Agent struct {
 	loopDetector *LoopDetector
 	approval     *ApprovalManager
 	heartbeat    *SafetyHeartbeat
+	depth        int // nesting depth for agent_spawn
+	maxDepth     int // max nesting depth (default 3)
 }
 
 // Builder constructs an Agent with all dependencies.
@@ -34,6 +37,7 @@ type Builder struct {
 	skills         []*sk.Skill
 	observer       observer.Observer
 	approvalConfig *ApprovalConfig
+	depth          int // for sub-agents
 }
 
 // NewBuilder creates a new Agent builder.
@@ -100,7 +104,7 @@ func (b *Builder) Build() (*Agent, error) {
 		// It will fire every 10 turns automatically
 	}
 
-	return &Agent{
+	ag := &Agent{
 		config:       b.config,
 		provider:     b.provider,
 		tools:        b.tools,
@@ -109,7 +113,49 @@ func (b *Builder) Build() (*Agent, error) {
 		loopDetector: NewLoopDetector(DefaultLoopDetectionConfig()),
 		approval:     NewApprovalManager(approvalCfg),
 		heartbeat:    NewSafetyHeartbeat(heartbeatCfg),
-	}, nil
+		depth:        b.depth,
+		maxDepth:     3,
+	}
+
+	// Wire agent_spawn tool with a sub-agent runner
+	builtin.SetAgentSpawnDeps(&builtin.AgentSpawnDeps{
+		CurrentDepth: ag.depth,
+		MaxDepth:     ag.maxDepth,
+		RunSubAgent: func(ctx context.Context, subCfg *config.AgentConfig, mission string) (string, error) {
+			// Inherit model from parent if not set
+			if subCfg.Model == "" {
+				subCfg.Model = ag.config.Model
+			}
+			// Create a sub-agent at depth+1
+			subBuilder := NewBuilder()
+			subBuilder.depth = ag.depth + 1
+			sub, err := subBuilder.
+				WithConfig(subCfg).
+				WithProvider(ag.provider).
+				WithTools(ag.tools).
+				WithObserver(observer.Noop{}).
+				Build()
+			if err != nil {
+				return "", err
+			}
+			events, err := sub.Run(ctx, mission)
+			if err != nil {
+				return "", err
+			}
+			// Collect text output
+			var text string
+			for ev := range events {
+				if ev.Type == EventTextDelta {
+					if d, ok := ev.Data.(TextDeltaData); ok {
+						text += d.Text
+					}
+				}
+			}
+			return text, nil
+		},
+	})
+
+	return ag, nil
 }
 
 // Run executes the agent turn loop with the given mission.

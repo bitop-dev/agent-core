@@ -54,6 +54,7 @@ func AllWithOptions(opts BuiltinOptions) []tool.Tool {
 		NewGrep(),
 		NewHTTPFetch(),
 		NewTasks(opts.TaskStore),
+		newAgentSpawn(),
 	}
 }
 

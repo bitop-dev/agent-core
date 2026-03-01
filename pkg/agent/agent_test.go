@@ -42,8 +42,8 @@ func TestBuildRequiresConfig(t *testing.T) {
 func TestNewToolEngine(t *testing.T) {
 	e := NewToolEngine()
 	defs := e.Definitions()
-	if len(defs) != 8 {
-		t.Errorf("expected 8 built-in tools, got %d", len(defs))
+	if len(defs) != 9 {
+		t.Errorf("expected 9 built-in tools, got %d", len(defs))
 	}
 
 	names := make(map[string]bool)
