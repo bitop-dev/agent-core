@@ -194,6 +194,15 @@ func createProvider(name, apiKey, baseURL string) provider.Provider {
 			BaseURL: url,
 			APIKey:  apiKey,
 		})
+	case "openai-responses":
+		url := baseURL
+		if url == "" {
+			url = "https://api.openai.com"
+		}
+		return provider.NewOpenAIResponses(provider.OpenAIResponsesConfig{
+			BaseURL: url,
+			APIKey:  apiKey,
+		})
 	default: // "openai" and anything else
 		url := baseURL
 		if url == "" {
