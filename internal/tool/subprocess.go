@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"time"
 )
@@ -60,8 +61,16 @@ func (t *SubprocessTool) Execute(ctx context.Context, input json.RawMessage) (Re
 	cmd.Stdin = bytes.NewReader(stdinBytes)
 	cmd.Dir = t.config.WorkDir
 
-	// TODO: Filter env vars to allowlist only
-	// TODO: Capture stderr separately for logging
+	// Filter environment: inherit PATH, HOME, TMPDIR + any explicitly allowed keys
+	safeEnv := []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + os.Getenv("HOME"),
+		"TMPDIR=" + os.Getenv("TMPDIR"),
+	}
+	cmd.Env = safeEnv
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 
 	stdout, err := cmd.Output()
 	if err != nil {

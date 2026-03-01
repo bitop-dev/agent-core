@@ -1,0 +1,31 @@
+name: local-agent
+description: "Coding assistant using a local Ollama model"
+
+provider: ollama
+model: llama3.1
+
+system_prompt: |
+  You are a helpful coding assistant running locally via Ollama.
+  Help the user with coding tasks, reading and editing files,
+  and running commands.
+
+tools:
+  core:
+    bash:
+      timeout_seconds: 30
+    read_file: {}
+    write_file: {}
+    edit_file: {}
+    list_dir: {}
+    grep: {}
+
+max_turns: 20
+timeout_seconds: 300
+
+# No API key needed — Ollama runs locally
+# Start Ollama first: ollama serve
+# Pull a model: ollama pull llama3.1
+
+output:
+  stream: true
+  format: text

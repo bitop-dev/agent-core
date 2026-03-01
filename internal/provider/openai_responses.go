@@ -22,6 +22,11 @@ type openaiResponsesProvider struct {
 	client *http.Client
 }
 
+// SetAPIKey rotates the API key for this provider.
+func (p *openaiResponsesProvider) SetAPIKey(key string) {
+	p.config.APIKey = key
+}
+
 // NewOpenAIResponses creates a provider using the OpenAI Responses API (/v1/responses).
 func NewOpenAIResponses(cfg OpenAIResponsesConfig) Provider {
 	return &openaiResponsesProvider{

@@ -1,0 +1,46 @@
+name: sandboxed-agent
+description: "Agent restricted to a specific directory with approval prompts"
+
+model: gpt-4o
+
+system_prompt: |
+  You are a helpful coding assistant. You can only access files
+  within the project directory. Destructive operations require
+  human approval.
+
+tools:
+  core:
+    bash:
+      working_dir: /tmp/sandbox
+      timeout_seconds: 30
+      allowed_paths:
+        - /tmp/sandbox
+      denied_paths:
+        - /tmp/sandbox/.env
+        - /tmp/sandbox/.git
+    read_file:
+      allowed_paths:
+        - /tmp/sandbox
+    write_file:
+      allowed_paths:
+        - /tmp/sandbox
+      denied_paths:
+        - /tmp/sandbox/.env
+    edit_file:
+      allowed_paths:
+        - /tmp/sandbox
+    list_dir: {}
+    grep: {}
+
+max_turns: 15
+timeout_seconds: 300
+
+approval:
+  policy: list
+  required_tools:
+    - bash
+    - write_file
+
+output:
+  stream: true
+  format: text

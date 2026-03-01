@@ -15,6 +15,11 @@ type Provider interface {
 	Capabilities() Capabilities
 }
 
+// KeyRotatable is optionally implemented by providers that support API key rotation.
+type KeyRotatable interface {
+	SetAPIKey(key string)
+}
+
 // CompletionRequest is what gets sent to the LLM.
 type CompletionRequest struct {
 	Model        string

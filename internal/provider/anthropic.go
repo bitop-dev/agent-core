@@ -23,6 +23,11 @@ type anthropicProvider struct {
 }
 
 // NewAnthropic creates a provider for the Anthropic Messages API.
+// SetAPIKey rotates the API key for this provider.
+func (p *anthropicProvider) SetAPIKey(key string) {
+	p.config.APIKey = key
+}
+
 func NewAnthropic(cfg AnthropicConfig) Provider {
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = "https://api.anthropic.com"

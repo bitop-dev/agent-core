@@ -23,6 +23,11 @@ type openaiProvider struct {
 	client *http.Client
 }
 
+// SetAPIKey rotates the API key for this provider.
+func (p *openaiProvider) SetAPIKey(key string) {
+	p.config.APIKey = key
+}
+
 // NewOpenAI creates a provider for any OpenAI-compatible API endpoint.
 func NewOpenAI(cfg OpenAIConfig) Provider {
 	return &openaiProvider{

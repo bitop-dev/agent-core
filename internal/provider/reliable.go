@@ -229,8 +229,11 @@ func (rp *ReliableProvider) rotateKey() {
 		idx := rp.keyIndex.Add(1)
 		key := rp.apiKeys[idx%int64(len(rp.apiKeys))]
 		log.Printf("[reliable] rotated to key ending ...%s", key[max(0, len(key)-4):])
-		// TODO: Apply the rotated key to the provider
-		// This requires providers to support SetAPIKey() — tracked for follow-up
+		for _, np := range rp.providers {
+			if kr, ok := np.provider.(KeyRotatable); ok {
+				kr.SetAPIKey(key)
+			}
+		}
 	}
 }
 
