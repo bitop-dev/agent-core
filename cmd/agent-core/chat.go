@@ -251,6 +251,9 @@ func runChat(ctx context.Context, a *agent.Agent, sess *session.Session, store *
 					}
 				}
 
+			case agent.EventContextCompact:
+				fmt.Fprintf(os.Stderr, "\033[33m⟳ compacting conversation history...\033[0m\n")
+
 			case agent.EventError:
 				fmt.Fprintf(os.Stderr, "\033[31merror: %v\033[0m\n", event.Data)
 

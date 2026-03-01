@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/bitop-dev/agent-core/internal/models"
 	"github.com/bitop-dev/agent-core/internal/observer"
 	"github.com/bitop-dev/agent-core/internal/provider"
 	"github.com/bitop-dev/agent-core/internal/tool"
@@ -21,6 +22,18 @@ func (a *Agent) loop(ctx context.Context, history []provider.Message, ch chan<- 
 
 	systemPrompt := a.buildSystemPrompt()
 	toolSpecs := a.buildToolSpecs()
+
+	// Track token usage for proactive compaction
+	var lastInputTokens int
+	compactionThreshold := a.config.Context.CompactionThreshold
+	if compactionThreshold == 0 {
+		compactionThreshold = 0.8
+	}
+	// Get context window from model catalog (fallback to 128K)
+	contextWindow := 128000
+	if info := models.Get(a.config.Model); info != nil {
+		contextWindow = info.ContextWindow
+	}
 
 	for {
 		totalTurns++
@@ -50,6 +63,15 @@ func (a *Agent) loop(ctx context.Context, history []provider.Message, ch chan<- 
 		default:
 		}
 
+		// Proactive compaction: if context is getting full, summarize older turns
+		if shouldCompact(lastInputTokens, contextWindow, compactionThreshold) {
+			ch <- RunEvent{Type: EventContextCompact}
+			compacted, err := a.compactHistory(ctx, history)
+			if err == nil {
+				history = compacted
+			}
+		}
+
 		// Call the LLM
 		req := provider.CompletionRequest{
 			Model:        a.config.Model,
@@ -61,6 +83,18 @@ func (a *Agent) loop(ctx context.Context, history []provider.Message, ch chan<- 
 
 		stream, err := a.provider.Complete(ctx, req)
 		if err != nil {
+			// Reactive compaction: if context window exceeded, compact and retry
+			errClass := provider.ClassifyError(err)
+			if errClass == provider.ErrorContextFull && len(history) > compactKeepRecent {
+				ch <- RunEvent{Type: EventContextCompact}
+				compacted, compactErr := a.compactHistory(ctx, history)
+				if compactErr == nil {
+					history = compacted
+					totalTurns-- // don't count this failed attempt
+					continue     // retry with compacted history
+				}
+			}
+
 			ch <- RunEvent{Type: EventError, Data: err.Error()}
 			ch <- RunEvent{Type: EventAgentEnd, Data: AgentEndData{
 				TotalTurns: totalTurns,
@@ -103,6 +137,7 @@ func (a *Agent) loop(ctx context.Context, history []provider.Message, ch chan<- 
 
 			case provider.EventUsage:
 				if event.Usage != nil {
+					lastInputTokens = event.Usage.InputTokens
 					a.observer.OnEvent(observer.Event{
 						Type:    observer.ObsTokenUsage,
 						Payload: event.Usage,
