@@ -17,9 +17,15 @@ type readFileArgs struct {
 	Limit  int    `json:"limit,omitempty"`
 }
 
-type readFileTool struct{}
+type readFileTool struct {
+	sandbox *tool.SandboxPolicy
+}
 
 func NewReadFile() tool.Tool { return &readFileTool{} }
+
+func NewReadFileWithSandbox(p *tool.SandboxPolicy) tool.Tool {
+	return &readFileTool{sandbox: p}
+}
 
 func (t *readFileTool) Definition() tool.Definition {
 	return tool.Definition{
@@ -53,6 +59,12 @@ func (t *readFileTool) Execute(ctx context.Context, input json.RawMessage) (tool
 	}
 	if args.Path == "" {
 		return tool.Result{Content: "path is required", IsError: true}, nil
+	}
+
+	if t.sandbox != nil {
+		if err := t.sandbox.CheckPath(args.Path); err != nil {
+			return tool.Result{Content: err.Error(), IsError: true}, nil
+		}
 	}
 
 	f, err := os.Open(args.Path)

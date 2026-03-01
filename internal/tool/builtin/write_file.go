@@ -15,9 +15,17 @@ type writeFileArgs struct {
 	Content string `json:"content"`
 }
 
-type writeFileTool struct{}
+type writeFileTool struct {
+	sandbox *tool.SandboxPolicy
+}
 
+// NewWriteFile creates the write_file tool. Pass nil for no sandbox.
 func NewWriteFile() tool.Tool { return &writeFileTool{} }
+
+// NewWriteFileWithSandbox creates the write_file tool with path checking.
+func NewWriteFileWithSandbox(p *tool.SandboxPolicy) tool.Tool {
+	return &writeFileTool{sandbox: p}
+}
 
 func (t *writeFileTool) Definition() tool.Definition {
 	return tool.Definition{
@@ -47,6 +55,13 @@ func (t *writeFileTool) Execute(ctx context.Context, input json.RawMessage) (too
 	}
 	if args.Path == "" {
 		return tool.Result{Content: "path is required", IsError: true}, nil
+	}
+
+	// Check sandbox path restrictions
+	if t.sandbox != nil {
+		if err := t.sandbox.CheckPath(args.Path); err != nil {
+			return tool.Result{Content: err.Error(), IsError: true}, nil
+		}
 	}
 
 	// Create parent directories

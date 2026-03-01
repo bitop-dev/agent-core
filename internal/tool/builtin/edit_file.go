@@ -16,9 +16,15 @@ type editFileArgs struct {
 	NewText string `json:"new_text"`
 }
 
-type editFileTool struct{}
+type editFileTool struct {
+	sandbox *tool.SandboxPolicy
+}
 
 func NewEditFile() tool.Tool { return &editFileTool{} }
+
+func NewEditFileWithSandbox(p *tool.SandboxPolicy) tool.Tool {
+	return &editFileTool{sandbox: p}
+}
 
 func (t *editFileTool) Definition() tool.Definition {
 	return tool.Definition{
@@ -55,6 +61,12 @@ func (t *editFileTool) Execute(ctx context.Context, input json.RawMessage) (tool
 	}
 	if args.OldText == "" {
 		return tool.Result{Content: "old_text is required", IsError: true}, nil
+	}
+
+	if t.sandbox != nil {
+		if err := t.sandbox.CheckPath(args.Path); err != nil {
+			return tool.Result{Content: err.Error(), IsError: true}, nil
+		}
 	}
 
 	data, err := os.ReadFile(args.Path)

@@ -40,12 +40,14 @@ type Engine struct {
 	mu      sync.RWMutex
 	tools   map[string]Tool
 	allowed map[string]bool // nil = all allowed
+	Sandbox SandboxPolicy
 }
 
-// NewEngine creates an empty ToolEngine.
+// NewEngine creates an empty ToolEngine with default sandbox policy.
 func NewEngine() *Engine {
 	return &Engine{
-		tools: make(map[string]Tool),
+		tools:   make(map[string]Tool),
+		Sandbox: DefaultSandboxPolicy(),
 	}
 }
 
@@ -118,5 +120,11 @@ func (e *Engine) execute(ctx context.Context, c Call) Result {
 	if err != nil {
 		return Result{Content: fmt.Sprintf("tool error: %v", err), IsError: true}
 	}
+
+	// Apply sandbox output truncation
+	if truncated, wasTruncated := e.Sandbox.TruncateOutput(result.Content); wasTruncated {
+		result.Content = truncated
+	}
+
 	return result
 }
