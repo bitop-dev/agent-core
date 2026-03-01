@@ -99,8 +99,10 @@ All community skill tools are compiled to WebAssembly and run inside Wazero:
   - **AllowedPaths** / **ReadOnlyPaths** — filesystem access
   - **AllowedHosts** — network access (HTTP through host functions)
   - **EnvVars** — environment variable passthrough
-- **Host functions** — the `agent_host` module provides HTTP to WASM tools, gated by AllowedHosts
-- **~500ms per invocation** (includes compile; cacheable for repeat calls)
+- **Host functions** — the `agent_host` module provides HTTP to WASM tools:
+  - `http_request` — basic HTTP (GET/POST/PUT/DELETE)
+  - `http_request_headers` — HTTP with custom headers (for authenticated APIs like GitHub)
+- **Module caching** — compiled modules cached by SHA-256; ~530ms first call, ~3ms cached (160x speedup)
 - **Portable** — .wasm binaries run on any OS where agent-core runs
 
 ```yaml
@@ -277,6 +279,7 @@ internal/
   session/               JSONL session persistence
   output/                Terminal renderers (text, JSON, JSONL)
 pkg/agent/               Public API for embedding
+pkg/hostcall/            WASM guest bindings (import in tool modules)
 ```
 
 ---
