@@ -199,15 +199,17 @@ func (a *Agent) loop(ctx context.Context, history []provider.Message, ch chan<- 
 
 		results := a.tools.Dispatch(ctx, calls)
 
-		// Append tool results to history and emit events
+		// Append tool results to history and emit events.
+		// Scrub credentials from tool output before it enters LLM context.
 		for i, result := range results {
+			scrubbedContent := scrubCredentials(result.Content)
 			history = append(history, provider.Message{
 				Role: provider.RoleToolResult,
 				Content: []provider.ContentBlock{
 					{
 						Type:       provider.ContentToolResult,
 						ToolCallID: calls[i].ID,
-						Text:       result.Content,
+						Text:       scrubbedContent,
 						IsError:    result.IsError,
 					},
 				},
@@ -216,7 +218,7 @@ func (a *Agent) loop(ctx context.Context, history []provider.Message, ch chan<- 
 			ch <- RunEvent{Type: EventToolCallEnd, Data: ToolCallEndData{
 				ToolCallID: calls[i].ID,
 				ToolName:   calls[i].Name,
-				Content:    result.Content,
+				Content:    scrubbedContent,
 				IsError:    result.IsError,
 			}}
 		}
