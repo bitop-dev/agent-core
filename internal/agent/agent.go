@@ -23,6 +23,7 @@ type Agent struct {
 	observer     observer.Observer
 	loopDetector *LoopDetector
 	approval     *ApprovalManager
+	heartbeat    *SafetyHeartbeat
 }
 
 // Builder constructs an Agent with all dependencies.
@@ -89,6 +90,16 @@ func (b *Builder) Build() (*Agent, error) {
 		approvalCfg = *b.approvalConfig
 	}
 
+	// Heartbeat config from agent YAML or defaults
+	heartbeatCfg := HeartbeatConfig{AgentName: b.config.Name}
+	if b.config.Heartbeat.Interval > 0 {
+		heartbeatCfg.Interval = b.config.Heartbeat.Interval
+	}
+	if !b.config.Heartbeat.Enabled && b.config.Heartbeat.Interval == 0 {
+		// If not explicitly enabled and no interval set, use default (10)
+		// It will fire every 10 turns automatically
+	}
+
 	return &Agent{
 		config:       b.config,
 		provider:     b.provider,
@@ -97,6 +108,7 @@ func (b *Builder) Build() (*Agent, error) {
 		observer:     b.observer,
 		loopDetector: NewLoopDetector(DefaultLoopDetectionConfig()),
 		approval:     NewApprovalManager(approvalCfg),
+		heartbeat:    NewSafetyHeartbeat(heartbeatCfg),
 	}, nil
 }
 

@@ -303,6 +303,18 @@ func (a *Agent) loop(ctx context.Context, history []provider.Message, ch chan<- 
 			return
 		}
 
+		// Safety heartbeat: inject reminder if interval reached
+		if reminder, due := a.heartbeat.Tick(); due {
+			ch <- RunEvent{Type: EventHeartbeat, Data: reminder}
+			history = append(history, provider.Message{
+				Role: provider.RoleUser,
+				Content: []provider.ContentBlock{{
+					Type: provider.ContentText,
+					Text: reminder,
+				}},
+			})
+		}
+
 		ch <- RunEvent{Type: EventTurnEnd}
 		_ = stopReason
 	}
