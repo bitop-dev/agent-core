@@ -1,0 +1,218 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/spf13/cobra"
+
+	"github.com/bitop-dev/agent-core/internal/config"
+	"github.com/bitop-dev/agent-core/internal/skill"
+	"github.com/bitop-dev/agent-core/internal/tool"
+)
+
+// defaultSkillDirs returns the standard directories to search for skills.
+func defaultSkillDirs() []string {
+	home, _ := os.UserHomeDir()
+	return []string{
+		filepath.Join(home, ".agent-core", "skills"),
+	}
+}
+
+// loadSkills loads skills referenced in the agent config.
+// Returns loaded skills and registers their tools in the engine.
+func loadSkills(cfg *config.AgentConfig, engine *tool.Engine) ([]*skill.Skill, error) {
+	if len(cfg.Skills) == 0 {
+		return nil, nil
+	}
+
+	loader := skill.NewLoader(defaultSkillDirs()...)
+
+	// Collect skill names from config
+	var names []string
+	skillConfigs := make(map[string]map[string]any)
+	for _, ref := range cfg.Skills {
+		names = append(names, ref.Name)
+		if ref.Config != nil {
+			skillConfigs[ref.Name] = ref.Config
+		}
+	}
+
+	// Load skills
+	skills, warnings := loader.LoadByName(names)
+	for _, w := range warnings {
+		fmt.Fprintf(os.Stderr, "\033[33mwarning: %s\033[0m\n", w)
+	}
+
+	// Register skill tools in the engine
+	for _, sk := range skills {
+		for _, td := range sk.Tools {
+			// Find the tool executable
+			execPath := findToolExecutable(sk.Dir, td.Name)
+			if execPath == "" {
+				fmt.Fprintf(os.Stderr, "\033[33mwarning: no executable found for tool %s in skill %s\033[0m\n", td.Name, sk.Name)
+				continue
+			}
+
+			// Build subprocess tool config
+			subCfg := tool.SubprocessConfig{
+				Command:        execPath,
+				TimeoutSeconds: 30,
+				WorkDir:        ".",
+				SkillConfig:    skillConfigs[sk.Name],
+			}
+
+			st := tool.NewSubprocessTool(tool.Definition{
+				Name:        td.Name,
+				Description: td.Description,
+				InputSchema: json.RawMessage(td.Parameters),
+			}, subCfg)
+
+			engine.Register(st)
+		}
+	}
+
+	return skills, nil
+}
+
+// findToolExecutable looks for an executable script/binary for a tool.
+// Checks tools/<name>.py, tools/<name>.sh, tools/<name> (in that order).
+func findToolExecutable(skillDir, toolName string) string {
+	toolsDir := filepath.Join(skillDir, "tools")
+	candidates := []string{
+		filepath.Join(toolsDir, toolName+".py"),
+		filepath.Join(toolsDir, toolName+".sh"),
+		filepath.Join(toolsDir, toolName),
+	}
+	for _, path := range candidates {
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path
+		}
+	}
+	return ""
+}
+
+// skillCmd handles skill management commands.
+func skillCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "skill",
+		Short: "Skill management",
+	}
+
+	cmd.AddCommand(skillListCmd())
+	cmd.AddCommand(skillShowCmd())
+	cmd.AddCommand(skillTestCmd())
+
+	return cmd
+}
+
+func skillListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List installed skills",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			loader := skill.NewLoader(defaultSkillDirs()...)
+			skills, warnings := loader.LoadAll()
+
+			for _, w := range warnings {
+				fmt.Fprintf(os.Stderr, "\033[33m%s\033[0m\n", w)
+			}
+
+			if len(skills) == 0 {
+				fmt.Println("No skills installed.")
+				fmt.Printf("Install skills to: %s\n", defaultSkillDirs()[0])
+				return nil
+			}
+
+			fmt.Printf("%-20s  %-8s  %-6s  %s\n", "Name", "Version", "Tools", "Description")
+			fmt.Printf("%-20s  %-8s  %-6s  %s\n", "---", "---", "---", "---")
+			for _, sk := range skills {
+				emoji := sk.Emoji
+				if emoji == "" {
+					emoji = " "
+				}
+				desc := sk.Description
+				if len(desc) > 60 {
+					desc = desc[:60] + "..."
+				}
+				fmt.Printf("%s %-18s  %-8s  %-6d  %s\n",
+					emoji, sk.Name, sk.Version, len(sk.Tools), desc)
+			}
+			return nil
+		},
+	}
+}
+
+func skillShowCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "show [skill-name]",
+		Short: "Show skill details",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			loader := skill.NewLoader(defaultSkillDirs()...)
+			skills, _ := loader.LoadByName([]string{args[0]})
+
+			if len(skills) == 0 {
+				return fmt.Errorf("skill %q not found", args[0])
+			}
+
+			sk := skills[0]
+			fmt.Printf("Name:        %s %s\n", sk.Emoji, sk.Name)
+			fmt.Printf("Version:     %s\n", sk.Version)
+			fmt.Printf("Author:      %s\n", sk.Author)
+			fmt.Printf("Description: %s\n", sk.Description)
+			fmt.Printf("Tags:        %v\n", sk.Tags)
+			fmt.Printf("Dir:         %s\n", sk.Dir)
+
+			if len(sk.Requires.Bins) > 0 {
+				fmt.Printf("Requires:    bins=%v\n", sk.Requires.Bins)
+			}
+			if len(sk.Requires.Env) > 0 {
+				fmt.Printf("Requires:    env=%v\n", sk.Requires.Env)
+			}
+
+			if len(sk.Tools) > 0 {
+				fmt.Printf("\nTools:\n")
+				for _, t := range sk.Tools {
+					fmt.Printf("  %-20s %s\n", t.Name, t.Description)
+				}
+			}
+
+			return nil
+		},
+	}
+}
+
+func skillTestCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "test [skill-dir]",
+		Short: "Test a skill (validate structure and eligibility)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			loader := skill.NewLoader()
+			sk, err := loader.Load(args[0])
+			if err != nil {
+				return fmt.Errorf("❌ load failed: %w", err)
+			}
+			fmt.Printf("✓ Loaded: %s %s v%s\n", sk.Emoji, sk.Name, sk.Version)
+			fmt.Printf("  Description: %s\n", sk.Description)
+			fmt.Printf("  Tools: %d\n", len(sk.Tools))
+			fmt.Printf("  Instructions: %d chars\n", len(sk.Instructions))
+
+			// Check eligibility
+			errs := skill.CheckEligibility(sk)
+			if len(errs) > 0 {
+				fmt.Println("\n❌ Eligibility checks failed:")
+				for _, e := range errs {
+					fmt.Printf("  - %s\n", e)
+				}
+				return fmt.Errorf("skill not eligible")
+			}
+			fmt.Println("✓ Eligibility: all requirements met")
+
+			return nil
+		},
+	}
+}

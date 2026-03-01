@@ -15,6 +15,7 @@ type Skill struct {
 	Config       map[string]ConfigOption
 	Instructions string             // the markdown body (after frontmatter)
 	Dir          string             // path to skill directory on disk
+	Tools        []ToolDef          // tool schemas loaded from tools/*.json
 }
 
 // Requirements declares what a skill needs to function.

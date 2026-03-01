@@ -2,12 +2,18 @@ package agent
 
 import (
 	"github.com/bitop-dev/agent-core/internal/provider"
+	"github.com/bitop-dev/agent-core/internal/skill"
 )
 
 // buildSystemPrompt constructs the full system prompt with skill instructions injected.
 func (a *Agent) buildSystemPrompt() string {
 	prompt := a.config.SystemPrompt
-	// TODO: Inject skill instructions from loaded skills
+
+	// Inject skill instructions
+	if len(a.skills) > 0 {
+		prompt += skill.BuildSystemPromptFragment(a.skills)
+	}
+
 	return prompt
 }
 

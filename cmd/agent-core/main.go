@@ -33,11 +33,12 @@ func rootCmd() *cobra.Command {
 
 	root.AddCommand(runCmd())
 	root.AddCommand(chatCmd())
-	root.AddCommand(versionCmd())
+	root.AddCommand(skillCmd())
+	root.AddCommand(sessionsCmd())
 	root.AddCommand(toolsCmd())
 	root.AddCommand(modelsCmd())
 	root.AddCommand(validateCmd())
-	root.AddCommand(sessionsCmd())
+	root.AddCommand(versionCmd())
 
 	return root
 }
@@ -131,6 +132,12 @@ func runCmd() *cobra.Command {
 			engine := tool.NewEngine()
 			registerBuiltins(engine, cfg)
 
+			// Load skills
+			skills, err := loadSkills(cfg, engine)
+			if err != nil {
+				return fmt.Errorf("load skills: %w", err)
+			}
+
 			// Wrap provider with reliability layer
 			reliableCfg := provider.DefaultReliableConfig()
 			rp := provider.NewReliable(p, reliableCfg)
@@ -140,6 +147,7 @@ func runCmd() *cobra.Command {
 				WithConfig(cfg).
 				WithProvider(rp).
 				WithTools(engine).
+				WithSkills(skills).
 				WithObserver(observer.Noop{}).
 				Build()
 			if err != nil {

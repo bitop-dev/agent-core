@@ -9,15 +9,17 @@ import (
 	"github.com/bitop-dev/agent-core/internal/config"
 	"github.com/bitop-dev/agent-core/internal/observer"
 	"github.com/bitop-dev/agent-core/internal/provider"
+	sk "github.com/bitop-dev/agent-core/internal/skill"
 	"github.com/bitop-dev/agent-core/internal/tool"
 )
 
 // Agent is the core runtime. It holds a provider, tool engine, config,
-// and observer, and executes the turn loop when Run is called.
+// skills, and observer, and executes the turn loop when Run is called.
 type Agent struct {
 	config   *config.AgentConfig
 	provider provider.Provider
 	tools    *tool.Engine
+	skills   []*sk.Skill
 	observer observer.Observer
 }
 
@@ -26,6 +28,7 @@ type Builder struct {
 	config   *config.AgentConfig
 	provider provider.Provider
 	tools    *tool.Engine
+	skills   []*sk.Skill
 	observer observer.Observer
 }
 
@@ -51,6 +54,11 @@ func (b *Builder) WithTools(e *tool.Engine) *Builder {
 	return b
 }
 
+func (b *Builder) WithSkills(skills []*sk.Skill) *Builder {
+	b.skills = skills
+	return b
+}
+
 func (b *Builder) WithObserver(o observer.Observer) *Builder {
 	b.observer = o
 	return b
@@ -70,6 +78,7 @@ func (b *Builder) Build() (*Agent, error) {
 		config:   b.config,
 		provider: b.provider,
 		tools:    b.tools,
+		skills:   b.skills,
 		observer: b.observer,
 	}, nil
 }

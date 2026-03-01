@@ -103,11 +103,18 @@ func chatCmd() *cobra.Command {
 			engine := tool.NewEngine()
 			registerBuiltins(engine, cfg)
 
+			// Load skills
+			skills, err := loadSkills(cfg, engine)
+			if err != nil {
+				return fmt.Errorf("load skills: %w", err)
+			}
+
 			// Build agent
 			a, err := agent.NewBuilder().
 				WithConfig(cfg).
 				WithProvider(rp).
 				WithTools(engine).
+				WithSkills(skills).
 				WithObserver(observer.Noop{}).
 				Build()
 			if err != nil {
