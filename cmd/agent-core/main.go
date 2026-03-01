@@ -44,11 +44,12 @@ func rootCmd() *cobra.Command {
 
 func runCmd() *cobra.Command {
 	var (
-		configPath string
-		mission    string
-		modelFlag  string
-		baseURL    string
-		apiKey     string
+		configPath   string
+		mission      string
+		modelFlag    string
+		providerFlag string
+		baseURL      string
+		apiKey       string
 	)
 
 	cmd := &cobra.Command{
@@ -76,6 +77,9 @@ func runCmd() *cobra.Command {
 			if modelFlag != "" {
 				cfg.Model = modelFlag
 			}
+			if providerFlag != "" {
+				cfg.Provider = providerFlag
+			}
 
 			// Resolve mission
 			if mission == "" && len(args) > 0 {
@@ -94,10 +98,13 @@ func runCmd() *cobra.Command {
 				key = os.Getenv("OPENAI_API_KEY")
 			}
 			if key == "" {
+				key = os.Getenv("ANTHROPIC_API_KEY")
+			}
+			if key == "" {
 				key = os.Getenv("AGENT_CORE_API_KEY")
 			}
 			if key == "" {
-				return fmt.Errorf("API key required (--api-key, OPENAI_API_KEY, or AGENT_CORE_API_KEY)")
+				return fmt.Errorf("API key required (--api-key, OPENAI_API_KEY, ANTHROPIC_API_KEY, or AGENT_CORE_API_KEY)")
 			}
 
 			// Resolve base URL
@@ -108,15 +115,15 @@ func runCmd() *cobra.Command {
 			if url == "" {
 				url = os.Getenv("AGENT_CORE_BASE_URL")
 			}
-			if url == "" {
-				url = "https://api.openai.com/v1"
+
+			// Auto-detect provider from model name if not explicitly set
+			provName := cfg.Provider
+			if provName == "" {
+				provName = detectProvider(cfg.Model)
 			}
 
 			// Create provider
-			p := provider.NewOpenAI(provider.OpenAIConfig{
-				BaseURL: url,
-				APIKey:  key,
-			})
+			p := createProvider(provName, key, url)
 
 			// Create tool engine with built-in tools
 			engine := tool.NewEngine()
@@ -156,10 +163,47 @@ func runCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to agent YAML config")
 	cmd.Flags().StringVarP(&mission, "mission", "m", "", "Mission for the agent")
 	cmd.Flags().StringVar(&modelFlag, "model", "", "Override model from config")
+	cmd.Flags().StringVarP(&providerFlag, "provider", "p", "", "Provider: openai or anthropic (auto-detected from model)")
 	cmd.Flags().StringVar(&baseURL, "base-url", "", "Override API base URL")
-	cmd.Flags().StringVar(&apiKey, "api-key", "", "API key (or set OPENAI_API_KEY)")
+	cmd.Flags().StringVar(&apiKey, "api-key", "", "API key (or set OPENAI_API_KEY / ANTHROPIC_API_KEY)")
 
 	return cmd
+}
+
+// detectProvider guesses the provider from the model name.
+func detectProvider(model string) string {
+	m := strings.ToLower(model)
+	if strings.Contains(m, "claude") || strings.Contains(m, "sonnet") || strings.Contains(m, "opus") || strings.Contains(m, "haiku") {
+		return "anthropic"
+	}
+	return "openai" // default: OpenAI-compatible
+}
+
+// createProvider builds the right provider based on name, key, and optional base URL.
+func createProvider(name, apiKey, baseURL string) provider.Provider {
+	switch name {
+	case "anthropic":
+		url := baseURL
+		if url == "" {
+			url = os.Getenv("ANTHROPIC_BASE_URL")
+		}
+		if url == "" {
+			url = "https://api.anthropic.com"
+		}
+		return provider.NewAnthropic(provider.AnthropicConfig{
+			BaseURL: url,
+			APIKey:  apiKey,
+		})
+	default: // "openai" and anything else
+		url := baseURL
+		if url == "" {
+			url = "https://api.openai.com/v1"
+		}
+		return provider.NewOpenAI(provider.OpenAIConfig{
+			BaseURL: url,
+			APIKey:  apiKey,
+		})
+	}
 }
 
 // registerBuiltins adds core tools to the engine based on config.
