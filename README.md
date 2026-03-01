@@ -2,7 +2,7 @@
 
 A standalone Go binary for running AI agents from the command line. No database, no web UI, no Docker — just a binary, a YAML config, and an API key.
 
-> **Status**: Early development. Project scaffolding is in place. See the [planning docs](https://github.com/bitop-dev/agent-platform-docs) for the full design.
+> **Status**: Phase 1 complete — fully functional agent runtime with tools, skills, MCP, and safety features. 111 tests passing.
 
 ## Quick Start
 
@@ -30,15 +30,14 @@ make build
 ## Features
 
 - **8 core tools** built in: `bash` (opt-out), `read_file`, `write_file`, `edit_file`, `list_dir`, `grep`, `http_fetch`, `tasks`
-- **Skill system** — extend with SKILL.md packages (web_search, github, gitlab, etc.)
-- **Multi-provider** — Anthropic, OpenAI, Google, Ollama, OpenAI-compatible
-- **Provider reliability** — retry, backoff, API key rotation, model fallback chains
-- **Context compaction** — LLM-summarizes old turns when context window fills
-- **Loop detection** — catches stuck agents (no-progress, ping-pong, failure streaks)
-- **Credential scrubbing** — strips secrets from tool output before sending to LLM
-- **Session persistence** — multi-turn chats saved as JSONL files
-- **MCP support** — connect to Model Context Protocol tool servers
-- **Cost tracking** — per-run token usage and USD cost
+- **MCP support**: stdio + HTTP transports for external tool servers
+- **4 providers**: OpenAI, Anthropic, OpenAI Responses, Ollama (auto-detected from model name)
+- **Safety**: loop detection (3 strategies), credential scrubbing, approval manager, safety heartbeat
+- **Context management**: LLM-summarize compaction (proactive + reactive)
+- **Cost tracking**: token usage + USD estimation per run
+- **Skill system**: extend with SKILL.md packages (web_search, github, gitlab, etc.)
+- **Provider reliability**: retry, backoff, API key rotation, model fallback chains
+- **Session persistence**: multi-turn chats saved as JSONL, resume with `--session`
 
 ## Project Structure
 
