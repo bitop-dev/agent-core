@@ -164,18 +164,34 @@ func (w *WASMRuntime) Execute(ctx context.Context, inv ToolInvocation, caps Capa
 //     Returns -2 if response exceeds buffer size.
 func (w *WASMRuntime) registerHostFunctions(ctx context.Context) error {
 	_, err := w.engine.NewHostModuleBuilder("agent_host").
+		// http_request — basic HTTP without custom headers
 		NewFunctionBuilder().
-		WithGoModuleFunction(api.GoModuleFunc(httpRequestFn), 
+		WithGoModuleFunction(api.GoModuleFunc(httpRequestFn),
 			[]api.ValueType{
 				api.ValueTypeI32, api.ValueTypeI32, // method_ptr, method_len
 				api.ValueTypeI32, api.ValueTypeI32, // url_ptr, url_len
 				api.ValueTypeI32, api.ValueTypeI32, // body_ptr, body_len
 				api.ValueTypeI32, api.ValueTypeI32, // resp_buf_ptr, resp_buf_len
 			},
-			[]api.ValueType{api.ValueTypeI32}).    // -> bytes_written
+			[]api.ValueType{api.ValueTypeI32}).
 		WithParameterNames("method_ptr", "method_len", "url_ptr", "url_len",
 			"body_ptr", "body_len", "resp_buf_ptr", "resp_buf_len").
 		Export("http_request").
+		// http_request_headers — HTTP with custom headers (key: value\n pairs)
+		NewFunctionBuilder().
+		WithGoModuleFunction(api.GoModuleFunc(httpRequestHeadersFn),
+			[]api.ValueType{
+				api.ValueTypeI32, api.ValueTypeI32, // method_ptr, method_len
+				api.ValueTypeI32, api.ValueTypeI32, // url_ptr, url_len
+				api.ValueTypeI32, api.ValueTypeI32, // headers_ptr, headers_len
+				api.ValueTypeI32, api.ValueTypeI32, // body_ptr, body_len
+				api.ValueTypeI32, api.ValueTypeI32, // resp_buf_ptr, resp_buf_len
+			},
+			[]api.ValueType{api.ValueTypeI32}).
+		WithParameterNames("method_ptr", "method_len", "url_ptr", "url_len",
+			"headers_ptr", "headers_len", "body_ptr", "body_len",
+			"resp_buf_ptr", "resp_buf_len").
+		Export("http_request_headers").
 		Instantiate(ctx)
 	return err
 }
@@ -264,6 +280,116 @@ func httpRequestFn(ctx context.Context, mod api.Module, stack []uint64) {
 	}
 
 	// Write response to guest memory
+	if !mem.Write(respBufPtr, respBody) {
+		stack[0] = uint64(encodeI32(-1))
+		return
+	}
+
+	stack[0] = uint64(encodeI32(int32(len(respBody))))
+}
+
+// httpRequestHeadersFn is like httpRequestFn but accepts custom headers.
+// Headers are passed as "Key: Value\n" pairs in a single buffer.
+func httpRequestHeadersFn(ctx context.Context, mod api.Module, stack []uint64) {
+	methodPtr := uint32(stack[0])
+	methodLen := uint32(stack[1])
+	urlPtr := uint32(stack[2])
+	urlLen := uint32(stack[3])
+	headersPtr := uint32(stack[4])
+	headersLen := uint32(stack[5])
+	bodyPtr := uint32(stack[6])
+	bodyLen := uint32(stack[7])
+	respBufPtr := uint32(stack[8])
+	respBufLen := uint32(stack[9])
+
+	mem := mod.Memory()
+
+	methodBytes, ok := mem.Read(methodPtr, methodLen)
+	if !ok {
+		stack[0] = uint64(encodeI32(-1))
+		return
+	}
+
+	urlBytes, ok := mem.Read(urlPtr, urlLen)
+	if !ok {
+		stack[0] = uint64(encodeI32(-1))
+		return
+	}
+	rawURL := string(urlBytes)
+
+	// Enforce AllowedHosts
+	caps, _ := ctx.Value(capsKey{}).(*Capabilities)
+	if caps != nil && !isHostAllowed(rawURL, caps.AllowedHosts) {
+		errMsg := fmt.Sprintf(`{"error":"host not allowed","url":"%s"}`, rawURL)
+		if uint32(len(errMsg)) <= respBufLen {
+			mem.Write(respBufPtr, []byte(errMsg))
+		}
+		stack[0] = uint64(encodeI32(-3))
+		return
+	}
+
+	// Parse headers from guest memory
+	var headerPairs []string
+	if headersLen > 0 {
+		headerBytes, ok := mem.Read(headersPtr, headersLen)
+		if !ok {
+			stack[0] = uint64(encodeI32(-1))
+			return
+		}
+		headerPairs = strings.Split(string(headerBytes), "\n")
+	}
+
+	// Read body
+	var bodyReader io.Reader
+	if bodyLen > 0 {
+		bodyBytes, ok := mem.Read(bodyPtr, bodyLen)
+		if !ok {
+			stack[0] = uint64(encodeI32(-1))
+			return
+		}
+		bodyReader = bytes.NewReader(bodyBytes)
+	}
+
+	// Make the request
+	client := &http.Client{Timeout: 30 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, string(methodBytes), rawURL, bodyReader)
+	if err != nil {
+		stack[0] = uint64(encodeI32(-1))
+		return
+	}
+	req.Header.Set("User-Agent", "agent-core/1.0")
+
+	// Apply custom headers
+	for _, line := range headerPairs {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if k, v, ok := strings.Cut(line, ":"); ok {
+			req.Header.Set(strings.TrimSpace(k), strings.TrimSpace(v))
+		}
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		errMsg := fmt.Sprintf(`{"error":"%s"}`, strings.ReplaceAll(err.Error(), `"`, `\"`))
+		if uint32(len(errMsg)) <= respBufLen {
+			mem.Write(respBufPtr, []byte(errMsg))
+			stack[0] = uint64(encodeI32(int32(len(errMsg))))
+		} else {
+			stack[0] = uint64(encodeI32(-1))
+		}
+		return
+	}
+	defer resp.Body.Close()
+
+	limited := io.LimitReader(resp.Body, int64(respBufLen))
+	respBody, err := io.ReadAll(limited)
+	if err != nil {
+		stack[0] = uint64(encodeI32(-1))
+		return
+	}
+
 	if !mem.Write(respBufPtr, respBody) {
 		stack[0] = uint64(encodeI32(-1))
 		return
