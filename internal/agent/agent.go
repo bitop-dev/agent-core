@@ -22,15 +22,17 @@ type Agent struct {
 	skills       []*sk.Skill
 	observer     observer.Observer
 	loopDetector *LoopDetector
+	approval     *ApprovalManager
 }
 
 // Builder constructs an Agent with all dependencies.
 type Builder struct {
-	config   *config.AgentConfig
-	provider provider.Provider
-	tools    *tool.Engine
-	skills   []*sk.Skill
-	observer observer.Observer
+	config         *config.AgentConfig
+	provider       provider.Provider
+	tools          *tool.Engine
+	skills         []*sk.Skill
+	observer       observer.Observer
+	approvalConfig *ApprovalConfig
 }
 
 // NewBuilder creates a new Agent builder.
@@ -65,6 +67,11 @@ func (b *Builder) WithObserver(o observer.Observer) *Builder {
 	return b
 }
 
+func (b *Builder) WithApproval(cfg ApprovalConfig) *Builder {
+	b.approvalConfig = &cfg
+	return b
+}
+
 func (b *Builder) Build() (*Agent, error) {
 	if b.config == nil {
 		return nil, fmt.Errorf("config is required")
@@ -75,6 +82,13 @@ func (b *Builder) Build() (*Agent, error) {
 	if b.tools == nil {
 		b.tools = tool.NewEngine()
 	}
+	// Default approval: full autonomy (no prompts).
+	// CLI commands set supervised mode when --approve flag is used.
+	approvalCfg := ApprovalConfig{Mode: ApprovalFull}
+	if b.approvalConfig != nil {
+		approvalCfg = *b.approvalConfig
+	}
+
 	return &Agent{
 		config:       b.config,
 		provider:     b.provider,
@@ -82,6 +96,7 @@ func (b *Builder) Build() (*Agent, error) {
 		skills:       b.skills,
 		observer:     b.observer,
 		loopDetector: NewLoopDetector(DefaultLoopDetectionConfig()),
+		approval:     NewApprovalManager(approvalCfg),
 	}, nil
 }
 

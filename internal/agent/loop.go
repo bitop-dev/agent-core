@@ -187,7 +187,7 @@ func (a *Agent) loop(ctx context.Context, history []provider.Message, ch chan<- 
 			return
 		}
 
-		// Execute tool calls in parallel
+		// Build tool calls and check approval for each
 		calls := make([]tool.Call, len(toolCalls))
 		for i, tc := range toolCalls {
 			calls[i] = tool.Call{
@@ -197,7 +197,53 @@ func (a *Agent) loop(ctx context.Context, history []provider.Message, ch chan<- 
 			}
 		}
 
-		results := a.tools.Dispatch(ctx, calls)
+		// Approval gate: check each tool call before execution.
+		// Denied calls get a synthetic error result; approved calls proceed.
+		var approvedCalls []tool.Call
+		var deniedResults []tool.Result
+		var deniedIndices []int
+
+		for i, call := range calls {
+			if a.approval.NeedsApproval(call.Name) {
+				ch <- RunEvent{Type: EventApprovalNeeded, Data: ToolCallStartData{
+					ToolCallID: call.ID,
+					ToolName:   call.Name,
+					Arguments:  string(call.Arguments),
+				}}
+				resp := a.approval.RequestApproval(call.Name, string(call.Arguments))
+				if resp == ApprovalNo {
+					ch <- RunEvent{Type: EventApprovalDenied, Data: ToolCallStartData{
+						ToolCallID: call.ID,
+						ToolName:   call.Name,
+						Arguments:  string(call.Arguments),
+					}}
+					deniedResults = append(deniedResults, tool.Result{
+						Content: "Tool call denied by user.",
+						IsError: true,
+					})
+					deniedIndices = append(deniedIndices, i)
+					continue
+				}
+			}
+			approvedCalls = append(approvedCalls, call)
+		}
+
+		// Execute only approved calls
+		approvedResults := a.tools.Dispatch(ctx, approvedCalls)
+
+		// Merge results back in order
+		results := make([]tool.Result, len(calls))
+		approvedIdx := 0
+		deniedIdx := 0
+		for i := range calls {
+			if deniedIdx < len(deniedIndices) && deniedIndices[deniedIdx] == i {
+				results[i] = deniedResults[deniedIdx]
+				deniedIdx++
+			} else {
+				results[i] = approvedResults[approvedIdx]
+				approvedIdx++
+			}
+		}
 
 		// Append tool results to history and emit events.
 		// Scrub credentials from tool output before it enters LLM context.

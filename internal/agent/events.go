@@ -26,6 +26,8 @@ const (
 	EventError           RunEventType = "error"
 	EventContextCompact  RunEventType = "context_compact"
 	EventLoopDetected    RunEventType = "loop_detected"
+	EventApprovalNeeded  RunEventType = "approval_needed"
+	EventApprovalDenied  RunEventType = "approval_denied"
 )
 
 // TextDeltaData carries a streaming text fragment.
