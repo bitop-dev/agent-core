@@ -9,7 +9,7 @@ import (
 )
 
 // SandboxedTool wraps an external tool to execute through a sandbox runtime
-// (WASM, container, or subprocess). It implements the Tool interface so it
+// (WASM or container). It implements the Tool interface so it
 // can be registered in the Engine like any other tool.
 type SandboxedTool struct {
 	def     Definition
@@ -26,7 +26,7 @@ type SandboxedToolConfig struct {
 	// Def is the tool definition (name, description, schema).
 	Def Definition
 
-	// Runtime is which sandbox to use (wasm, container, subprocess).
+	// Runtime is which sandbox to use (wasm, container).
 	Runtime sandbox.RuntimeType
 
 	// Module is the path to the WASM module, container image, or executable.

@@ -25,7 +25,7 @@ type bashTool struct {
 func NewBash() tool.Tool { return &bashTool{} }
 
 // NewBashWithSandbox creates the bash tool with sandbox policy.
-// workingDir sets the subprocess working directory (empty = inherit).
+// workingDir sets the command's working directory (empty = inherit).
 func NewBashWithSandbox(p *tool.SandboxPolicy, workingDir string) tool.Tool {
 	return &bashTool{sandbox: p, workingDir: workingDir}
 }

@@ -4,7 +4,7 @@
 //   - native: direct Go execution (built-in tools, no sandbox)
 //   - wasm: WebAssembly modules via Wazero (lightweight, capability-based)
 //   - container: OCI containers via Docker/Podman (full isolation)
-//   - subprocess: raw OS process (legacy, unsandboxed)
+//   - native: built-in Go tools (compiled into the binary)
 //
 // The Runtime interface abstracts these so tools declare what they need
 // and the engine dispatches to the right executor.
@@ -67,7 +67,7 @@ type ToolInvocation struct {
 	Input []byte
 
 	// Module is the path to the WASM module or container image.
-	// For native/subprocess, this may be empty or the executable path.
+	// For native tools, this may be empty. For WASM, it's the .wasm file path.
 	Module string
 
 	// WorkDir is the working directory for the execution.

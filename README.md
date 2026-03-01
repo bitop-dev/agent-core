@@ -134,7 +134,7 @@ For full isolation, tools can run in Docker/Podman containers:
 Core tools also support path-based sandboxing:
 
 - **AllowedPaths / DeniedPaths**: restrict file system access
-- **Environment filtering**: only PATH, HOME, TMPDIR passed to subprocesses
+- **Environment filtering**: only PATH, HOME, TMPDIR passed to tool processes
 - **Output truncation**: configurable max output size
 - **Timeouts**: per-tool execution limits
 
@@ -167,7 +167,7 @@ description: "Search the web via DuckDuckGo"
 author: platform-team
 tags: [web, search]
 emoji: "🔍"
-runtime: wasm          # wasm | container | subprocess
+runtime: wasm          # wasm | container
 config:
   max_results:
     type: integer
@@ -266,9 +266,9 @@ cmd/agent-core/          CLI entrypoint (cobra commands)
 internal/
   agent/                 Turn loop, events, context management
   provider/              LLM providers (OpenAI, Anthropic, Reliable)
-  tool/                  Tool interface, engine, subprocess, sandboxed tool
+  tool/                  Tool interface, engine, sandboxed tool
     builtin/             9 core tool implementations
-  sandbox/               WASM, container, subprocess runtimes
+  sandbox/               WASM and container runtimes
     testdata/tools/      WASM tool source code (Go → .wasm)
     testdata/hostcall/   Go bindings for WASM host functions
   skill/                 Skill loader + remote registry

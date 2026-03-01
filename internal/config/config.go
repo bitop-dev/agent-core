@@ -30,7 +30,7 @@ type AgentConfig struct {
 // SandboxConfig controls how skill tools are executed.
 type SandboxConfig struct {
 	// Mode is the default sandbox runtime: "none", "wasm", "container".
-	// "none" runs tools as raw subprocesses (legacy/dev).
+	// "none" disables sandboxing (not recommended).
 	// "wasm" runs .wasm modules via Wazero (lightweight, capability-based).
 	// "container" runs tools in Docker/Podman containers (full isolation).
 	// Skills can override this per-skill via their own runtime field.

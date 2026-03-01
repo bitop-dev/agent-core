@@ -19,14 +19,14 @@ type SandboxPolicy struct {
 
 	// AllowedEnvKeys is the list of env var names tools may see.
 	// An empty list means all env vars are inherited. When set,
-	// only these keys (plus PATH, HOME, TMPDIR) are passed to subprocesses.
+	// only these keys (plus PATH, HOME, TMPDIR) are passed to tool processes.
 	AllowedEnvKeys []string
 
 	// MaxOutputBytes caps the size of tool output before truncation.
 	// 0 means unlimited. Default: 1MB.
 	MaxOutputBytes int
 
-	// DefaultTimeoutSec is the default subprocess timeout.
+	// DefaultTimeoutSec is the default tool execution timeout.
 	// 0 means 60 seconds.
 	DefaultTimeoutSec int
 }
