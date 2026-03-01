@@ -8,7 +8,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/bitop-dev/agent-core/internal/sandbox/testdata/hostcall"
+	"github.com/bitop-dev/agent-core/pkg/hostcall"
 )
 
 type request struct {

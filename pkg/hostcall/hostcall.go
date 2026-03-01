@@ -1,9 +1,19 @@
 //go:build wasip1
 
 // Package hostcall provides Go bindings for agent_host WASM host functions.
-// This package is imported by WASM tool modules compiled with GOOS=wasip1.
 //
-// It provides HTTP access through the host, gated by the sandbox's AllowedHosts.
+// Import this package in WASM tool modules compiled with GOOS=wasip1 GOARCH=wasm.
+// It provides HTTP access through the host runtime, gated by the sandbox's AllowedHosts.
+//
+// Usage:
+//
+//	import "github.com/bitop-dev/agent-core/pkg/hostcall"
+//
+//	body, err := hostcall.HTTPGet("https://api.example.com/data")
+//	resp, err := hostcall.HTTPPost("https://hooks.slack.com/...", payload)
+//
+// The host enforces AllowedHosts — requests to non-allowed hosts return a HostError
+// with Code -3.
 package hostcall
 
 import "unsafe"
@@ -35,6 +45,7 @@ func HTTPPost(url string, body []byte) ([]byte, error) {
 }
 
 // HTTPRequest makes an HTTP request through the host.
+// Supported methods: GET, POST, PUT, DELETE, PATCH.
 func HTTPRequest(method, url string, body []byte) ([]byte, error) {
 	methodBytes := []byte(method)
 	urlBytes := []byte(url)

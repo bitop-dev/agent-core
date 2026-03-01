@@ -3,12 +3,15 @@ package sandbox
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tetratelabs/wazero"
@@ -19,8 +22,12 @@ import (
 // WASMRuntime executes tool modules as WebAssembly via Wazero.
 // Each invocation gets its own module instance with sandboxed capabilities.
 // Host functions are injected for HTTP access, gated by AllowedHosts.
+// Compiled modules are cached by content hash for fast repeat invocations.
 type WASMRuntime struct {
 	engine wazero.Runtime
+
+	cacheMu sync.RWMutex
+	cache   map[string]wazero.CompiledModule // content hash → compiled module
 }
 
 // NewWASMRuntime creates a WASM runtime backed by Wazero.
@@ -37,7 +44,10 @@ func NewWASMRuntime(ctx context.Context) (*WASMRuntime, error) {
 		return nil, fmt.Errorf("wasi init: %w", err)
 	}
 
-	w := &WASMRuntime{engine: rt}
+	w := &WASMRuntime{
+		engine: rt,
+		cache:  make(map[string]wazero.CompiledModule),
+	}
 
 	// Register host functions once at init (not per-execution).
 	if err := w.registerHostFunctions(ctx); err != nil {
@@ -67,18 +77,12 @@ func (w *WASMRuntime) Execute(ctx context.Context, inv ToolInvocation, caps Capa
 	// Store capabilities in context for host functions
 	ctx = context.WithValue(ctx, capsKey{}, &caps)
 
-	// Read the WASM module bytes
-	wasmBytes, err := os.ReadFile(inv.Module)
+	// Get or compile the module (cached by content hash)
+	compiled, err := w.getOrCompile(ctx, inv.Module)
 	if err != nil {
-		return nil, fmt.Errorf("read wasm module %q: %w", inv.Module, err)
+		return nil, err
 	}
-
-	// Compile the module
-	compiled, err := w.engine.CompileModule(ctx, wasmBytes)
-	if err != nil {
-		return nil, fmt.Errorf("compile wasm: %w", err)
-	}
-	defer compiled.Close(ctx)
+	// Don't close compiled — it's cached for reuse
 
 	// Build WASI configuration with sandboxed I/O
 	var stdout, stderr bytes.Buffer
@@ -305,6 +309,62 @@ func encodeI32(v int32) uint32 {
 	return uint32(v)
 }
 
+// getOrCompile returns a cached compiled module or compiles and caches a new one.
+// Modules are cached by SHA-256 hash of their contents, so updated .wasm files
+// are automatically recompiled.
+func (w *WASMRuntime) getOrCompile(ctx context.Context, modulePath string) (wazero.CompiledModule, error) {
+	wasmBytes, err := os.ReadFile(modulePath)
+	if err != nil {
+		return nil, fmt.Errorf("read wasm module %q: %w", modulePath, err)
+	}
+
+	// Hash the module contents
+	hash := sha256.Sum256(wasmBytes)
+	key := hex.EncodeToString(hash[:])
+
+	// Check cache
+	w.cacheMu.RLock()
+	if compiled, ok := w.cache[key]; ok {
+		w.cacheMu.RUnlock()
+		return compiled, nil
+	}
+	w.cacheMu.RUnlock()
+
+	// Compile and cache
+	compiled, err := w.engine.CompileModule(ctx, wasmBytes)
+	if err != nil {
+		return nil, fmt.Errorf("compile wasm: %w", err)
+	}
+
+	w.cacheMu.Lock()
+	// Double-check in case another goroutine compiled while we were compiling
+	if existing, ok := w.cache[key]; ok {
+		w.cacheMu.Unlock()
+		compiled.Close(ctx) // discard our duplicate
+		return existing, nil
+	}
+	w.cache[key] = compiled
+	w.cacheMu.Unlock()
+
+	return compiled, nil
+}
+
+// CacheSize returns the number of compiled modules in the cache.
+func (w *WASMRuntime) CacheSize() int {
+	w.cacheMu.RLock()
+	defer w.cacheMu.RUnlock()
+	return len(w.cache)
+}
+
 func (w *WASMRuntime) Close() error {
-	return w.engine.Close(context.Background())
+	// Close all cached compiled modules
+	ctx := context.Background()
+	w.cacheMu.Lock()
+	for _, compiled := range w.cache {
+		compiled.Close(ctx)
+	}
+	w.cache = nil
+	w.cacheMu.Unlock()
+
+	return w.engine.Close(ctx)
 }
