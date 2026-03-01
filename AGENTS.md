@@ -16,7 +16,7 @@ internal/
   agent/               Turn loop, events, context management, loop detection
   provider/            LLM provider interface + implementations (Anthropic, OpenAI, etc.)
   tool/                Tool interface, ToolEngine, subprocess runner, sandbox
-  tool/builtin/        Core tools: bash, read_file, write_file, edit_file, list_dir, grep, http_fetch
+  tool/builtin/        Core tools: bash, read_file, write_file, edit_file, list_dir, grep, http_fetch, tasks
   mcp/                 MCP client (stdio + HTTP/SSE transports)
   models/              Model catalog (context windows, costs) + CostTracker
   observer/            Observer interface: Noop, Log, Cost, Multi

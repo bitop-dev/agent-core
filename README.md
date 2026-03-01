@@ -29,7 +29,7 @@ make build
 
 ## Features
 
-- **7 core tools** built in: `bash` (opt-out), `read_file`, `write_file`, `edit_file`, `list_dir`, `grep`, `http_fetch`
+- **8 core tools** built in: `bash` (opt-out), `read_file`, `write_file`, `edit_file`, `list_dir`, `grep`, `http_fetch`, `tasks`
 - **Skill system** — extend with SKILL.md packages (web_search, github, gitlab, etc.)
 - **Multi-provider** — Anthropic, OpenAI, Google, Ollama, OpenAI-compatible
 - **Provider reliability** — retry, backoff, API key rotation, model fallback chains
@@ -48,7 +48,7 @@ internal/
   agent/            Turn loop, events, context management
   provider/         LLM provider interface + implementations
   tool/             Tool interface, engine, subprocess runner
-  tool/builtin/     Core tools (bash, file ops, grep, http)
+  tool/builtin/     Core tools (bash, file ops, grep, http, tasks)
   skill/            Skill loader (SKILL.md parser, eligibility)
   config/           YAML config parsing + validation
   models/           Model catalog + cost tracking
