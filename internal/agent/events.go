@@ -57,6 +57,8 @@ type ToolCallEndData struct {
 type AgentEndData struct {
 	TotalTurns    int
 	TotalTokens   int
+	InputTokens   int
+	OutputTokens  int
 	TotalCostUSD  float64
 	DurationMs    int64
 	StopReason    string // "complete" | "max_turns" | "timeout" | "error" | "loop_detected"

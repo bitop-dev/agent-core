@@ -23,8 +23,9 @@ func (a *Agent) loop(ctx context.Context, history []provider.Message, ch chan<- 
 	systemPrompt := a.buildSystemPrompt()
 	toolSpecs := a.buildToolSpecs()
 
-	// Track token usage for proactive compaction
+	// Track token usage
 	var lastInputTokens int
+	var totalInputTokens, totalOutputTokens int
 	compactionThreshold := a.config.Context.CompactionThreshold
 	if compactionThreshold == 0 {
 		compactionThreshold = 0.8
@@ -37,30 +38,33 @@ func (a *Agent) loop(ctx context.Context, history []provider.Message, ch chan<- 
 
 	deferredRetries := 0
 
+	endData := func(reason string) AgentEndData {
+		return AgentEndData{
+			TotalTurns:   totalTurns,
+			TotalTokens:  totalInputTokens + totalOutputTokens,
+			InputTokens:  totalInputTokens,
+			OutputTokens: totalOutputTokens,
+			DurationMs:   time.Since(startTime).Milliseconds(),
+			StopReason:   reason,
+			History:      history,
+		}
+	}
+
 	for {
 		totalTurns++
 		ch <- RunEvent{Type: EventTurnStart, Data: totalTurns}
 
 		// Check turn limit
 		if totalTurns > a.config.MaxTurns {
-			ch <- RunEvent{Type: EventAgentEnd, Data: AgentEndData{
-				TotalTurns: totalTurns - 1,
-				StopReason: "max_turns",
-				DurationMs: time.Since(startTime).Milliseconds(),
-				History:    history,
-			}}
+			totalTurns--
+			ch <- RunEvent{Type: EventAgentEnd, Data: endData("max_turns")}
 			return
 		}
 
 		// Check context cancellation
 		select {
 		case <-ctx.Done():
-			ch <- RunEvent{Type: EventAgentEnd, Data: AgentEndData{
-				TotalTurns: totalTurns,
-				StopReason: "timeout",
-				DurationMs: time.Since(startTime).Milliseconds(),
-				History:    history,
-			}}
+			ch <- RunEvent{Type: EventAgentEnd, Data: endData("timeout")}
 			return
 		default:
 		}
@@ -98,12 +102,7 @@ func (a *Agent) loop(ctx context.Context, history []provider.Message, ch chan<- 
 			}
 
 			ch <- RunEvent{Type: EventError, Data: err.Error()}
-			ch <- RunEvent{Type: EventAgentEnd, Data: AgentEndData{
-				TotalTurns: totalTurns,
-				StopReason: "error",
-				DurationMs: time.Since(startTime).Milliseconds(),
-				History:    history,
-			}}
+			ch <- RunEvent{Type: EventAgentEnd, Data: endData("error")}
 			return
 		}
 
@@ -140,6 +139,8 @@ func (a *Agent) loop(ctx context.Context, history []provider.Message, ch chan<- 
 			case provider.EventUsage:
 				if event.Usage != nil {
 					lastInputTokens = event.Usage.InputTokens
+					totalInputTokens += event.Usage.InputTokens
+					totalOutputTokens += event.Usage.OutputTokens
 					a.observer.OnEvent(observer.Event{
 						Type:    observer.ObsTokenUsage,
 						Payload: event.Usage,
@@ -151,12 +152,7 @@ func (a *Agent) loop(ctx context.Context, history []provider.Message, ch chan<- 
 
 			case provider.EventProviderError:
 				ch <- RunEvent{Type: EventError, Data: event.Error.Error()}
-				ch <- RunEvent{Type: EventAgentEnd, Data: AgentEndData{
-					TotalTurns: totalTurns,
-					StopReason: "error",
-					DurationMs: time.Since(startTime).Milliseconds(),
-					History:    history,
-				}}
+				ch <- RunEvent{Type: EventAgentEnd, Data: endData("error")}
 				return
 			}
 		}
@@ -195,12 +191,7 @@ func (a *Agent) loop(ctx context.Context, history []provider.Message, ch chan<- 
 			}
 
 			ch <- RunEvent{Type: EventTurnEnd}
-			ch <- RunEvent{Type: EventAgentEnd, Data: AgentEndData{
-				TotalTurns: totalTurns,
-				StopReason: "complete",
-				DurationMs: time.Since(startTime).Milliseconds(),
-				History:    history,
-			}}
+			ch <- RunEvent{Type: EventAgentEnd, Data: endData("complete")}
 			return
 		}
 
@@ -314,12 +305,7 @@ func (a *Agent) loop(ctx context.Context, history []provider.Message, ch chan<- 
 		case VerdictHardStop:
 			ch <- RunEvent{Type: EventLoopDetected, Data: verdict.Message}
 			ch <- RunEvent{Type: EventTurnEnd}
-			ch <- RunEvent{Type: EventAgentEnd, Data: AgentEndData{
-				TotalTurns: totalTurns,
-				StopReason: "loop_detected",
-				DurationMs: time.Since(startTime).Milliseconds(),
-				History:    history,
-			}}
+			ch <- RunEvent{Type: EventAgentEnd, Data: endData("loop_detected")}
 			return
 		}
 
