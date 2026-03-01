@@ -19,10 +19,9 @@ import (
 type RuntimeType string
 
 const (
-	RuntimeNative     RuntimeType = "native"     // compiled-in Go code
-	RuntimeWASM       RuntimeType = "wasm"       // WebAssembly via Wazero
-	RuntimeContainer  RuntimeType = "container"  // Docker/Podman OCI container
-	RuntimeSubprocess RuntimeType = "subprocess" // raw OS process (legacy)
+	RuntimeNative    RuntimeType = "native"    // compiled-in Go code
+	RuntimeWASM      RuntimeType = "wasm"      // WebAssembly via Wazero
+	RuntimeContainer RuntimeType = "container" // Docker/Podman OCI container
 )
 
 // Capabilities defines what a sandboxed runtime is allowed to access.

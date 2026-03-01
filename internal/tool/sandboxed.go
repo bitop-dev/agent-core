@@ -63,7 +63,7 @@ func (t *SandboxedTool) Definition() Definition {
 }
 
 func (t *SandboxedTool) Execute(ctx context.Context, input json.RawMessage) (Result, error) {
-	// Build the stdin payload (same format as SubprocessTool for compat)
+	// Build the stdin payload (standard tool protocol: name + arguments + config)
 	payload := map[string]any{
 		"name":      t.def.Name,
 		"arguments": json.RawMessage(input),

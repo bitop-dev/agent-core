@@ -1,5 +1,5 @@
 // Package tool defines the Tool interface, ToolEngine for dispatch,
-// and the subprocess runner for external tools.
+// and the sandboxed runner for external tools.
 package tool
 
 import (
@@ -9,7 +9,7 @@ import (
 	"sync"
 )
 
-// Tool is implemented by all tool types: core built-ins, skill subprocess tools, and MCP tools.
+// Tool is implemented by all tool types: core built-ins, WASM skill tools, and MCP tools.
 type Tool interface {
 	Definition() Definition
 	Execute(ctx context.Context, input json.RawMessage) (Result, error)

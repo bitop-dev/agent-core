@@ -32,9 +32,6 @@ var sandboxRegistry *sandbox.Registry
 func initSandboxRegistry(cfg *config.AgentConfig) func() {
 	sandboxRegistry = sandbox.NewRegistry()
 
-	// Always register subprocess (fallback)
-	sandboxRegistry.Register(sandbox.NewSubprocessRuntime())
-
 	// Initialize WASM runtime (always available — pure Go, no deps)
 	wasmRT, err := sandbox.NewWASMRuntime(context.Background())
 	if err != nil {
@@ -85,27 +82,23 @@ func resolveToolRuntime(skillRuntime, execType, defaultMode string) sandbox.Runt
 		return sandbox.RuntimeWASM
 	case "container":
 		return sandbox.RuntimeContainer
-	case "subprocess":
-		return sandbox.RuntimeSubprocess
 	}
 	// Auto-detect from executable type
 	if execType == "wasm" {
 		return sandbox.RuntimeWASM
 	}
 	// Agent default
-	switch defaultMode {
-	case "wasm":
-		return sandbox.RuntimeWASM
-	case "container":
+	if defaultMode == "container" {
 		return sandbox.RuntimeContainer
 	}
-	return sandbox.RuntimeSubprocess
+	// Default: WASM
+	return sandbox.RuntimeWASM
 }
 
 // loadSkills loads skills referenced in the agent config.
 // Returns loaded skills and registers their tools in the engine.
 // If a skill isn't found locally, it tries to install from skill_sources.
-// WASM skills are dispatched through the sandbox runtime; others use subprocess.
+// All skill tools are dispatched through the WASM sandbox runtime.
 func loadSkills(cfg *config.AgentConfig, engine *tool.Engine) ([]*skill.Skill, error) {
 	if len(cfg.Skills) == 0 {
 		return nil, nil
@@ -187,42 +180,30 @@ func loadSkills(cfg *config.AgentConfig, engine *tool.Engine) ([]*skill.Skill, e
 
 			rt := resolveToolRuntime(sk.Runtime, execType, defaultMode)
 
-			// Use sandbox if registry is initialized and runtime is available
-			if sandboxRegistry != nil && (rt == sandbox.RuntimeWASM || rt == sandbox.RuntimeContainer) {
-				if _, err := sandboxRegistry.Get(rt); err == nil {
-					st := tool.NewSandboxedTool(tool.SandboxedToolConfig{
-						Def: tool.Definition{
-							Name:        td.Name,
-							Description: td.Description,
-							InputSchema: json.RawMessage(td.Parameters),
-						},
-						Runtime:     rt,
-						Module:      execPath,
-						WorkDir:     ".",
-						Caps:        caps,
-						Registry:    sandboxRegistry,
-						SkillConfig: skillConfigs[sk.Name],
-					})
-					engine.Register(st)
-					fmt.Fprintf(os.Stderr, "\033[90m  ✓ %s → %s sandbox\033[0m\n", td.Name, rt)
-					continue
-				}
+			if sandboxRegistry == nil {
+				fmt.Fprintf(os.Stderr, "\033[33mwarning: sandbox not initialized, cannot register tool %s\033[0m\n", td.Name)
+				continue
+			}
+			if _, err := sandboxRegistry.Get(rt); err != nil {
+				fmt.Fprintf(os.Stderr, "\033[33mwarning: runtime %s not available for tool %s\033[0m\n", rt, td.Name)
+				continue
 			}
 
-			// Fallback: subprocess
-			subCfg := tool.SubprocessConfig{
-				Command:        execPath,
-				TimeoutSeconds: 30,
-				WorkDir:        ".",
-				SkillConfig:    skillConfigs[sk.Name],
-			}
-			st := tool.NewSubprocessTool(tool.Definition{
-				Name:        td.Name,
-				Description: td.Description,
-				InputSchema: json.RawMessage(td.Parameters),
-			}, subCfg)
+			st := tool.NewSandboxedTool(tool.SandboxedToolConfig{
+				Def: tool.Definition{
+					Name:        td.Name,
+					Description: td.Description,
+					InputSchema: json.RawMessage(td.Parameters),
+				},
+				Runtime:     rt,
+				Module:      execPath,
+				WorkDir:     ".",
+				Caps:        caps,
+				Registry:    sandboxRegistry,
+				SkillConfig: skillConfigs[sk.Name],
+			})
 			engine.Register(st)
-			fmt.Fprintf(os.Stderr, "\033[90m  ✓ %s → subprocess\033[0m\n", td.Name)
+			fmt.Fprintf(os.Stderr, "\033[90m  ✓ %s → %s sandbox\033[0m\n", td.Name, rt)
 		}
 	}
 

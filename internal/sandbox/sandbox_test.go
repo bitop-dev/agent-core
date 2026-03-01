@@ -84,7 +84,6 @@ func TestWASMRuntime_DefaultMessage(t *testing.T) {
 
 	wasmPath := filepath.Join(testdataDir(), "echo_tool.wasm")
 
-	// No message argument — should use default
 	input := map[string]any{
 		"name":      "echo",
 		"arguments": map[string]any{},
@@ -117,7 +116,7 @@ func TestWASMRuntime_Timeout(t *testing.T) {
 	wasmPath := filepath.Join(testdataDir(), "echo_tool.wasm")
 
 	caps := DefaultCapabilities()
-	caps.MaxTimeoutSec = 1 // 1 second — should be plenty for echo
+	caps.MaxTimeoutSec = 1
 
 	out, err := rt.Execute(ctx, ToolInvocation{
 		Name: "echo", Input: []byte(`{"name":"echo","arguments":{}}`), Module: wasmPath,
@@ -146,43 +145,12 @@ func TestWASMRuntime_BadModule(t *testing.T) {
 	}
 }
 
-// ─── Subprocess Runtime Tests ────────────────────────────────────────────────
-
-func TestSubprocessRuntime_Type(t *testing.T) {
-	rt := NewSubprocessRuntime()
-	if rt.Type() != RuntimeSubprocess {
-		t.Errorf("expected type %q, got %q", RuntimeSubprocess, rt.Type())
-	}
-}
-
-func TestSubprocessRuntime_Echo(t *testing.T) {
-	rt := NewSubprocessRuntime()
-
-	out, err := rt.Execute(context.Background(), ToolInvocation{
-		Name:   "echo",
-		Input:  []byte(`hello subprocess`),
-		Module: "/bin/cat", // cat reads stdin → stdout
-	}, DefaultCapabilities())
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	if out.ExitCode != 0 {
-		t.Errorf("exit code %d", out.ExitCode)
-	}
-	if string(out.Stdout) != "hello subprocess" {
-		t.Errorf("expected 'hello subprocess', got %q", out.Stdout)
-	}
-}
-
 // ─── Registry Tests ──────────────────────────────────────────────────────────
 
 func TestRegistry_Dispatch(t *testing.T) {
 	ctx := context.Background()
 
 	reg := NewRegistry()
-
-	// Register subprocess runtime
-	reg.Register(NewSubprocessRuntime())
 
 	// Register WASM runtime
 	wrt, err := NewWASMRuntime(ctx)
@@ -192,20 +160,9 @@ func TestRegistry_Dispatch(t *testing.T) {
 	defer wrt.Close()
 	reg.Register(wrt)
 
-	// Dispatch to subprocess
-	out, err := reg.Execute(ctx, RuntimeSubprocess, ToolInvocation{
-		Name: "cat", Input: []byte("from registry"), Module: "/bin/cat",
-	}, DefaultCapabilities())
-	if err != nil {
-		t.Fatalf("subprocess dispatch: %v", err)
-	}
-	if string(out.Stdout) != "from registry" {
-		t.Errorf("subprocess: got %q", out.Stdout)
-	}
-
 	// Dispatch to WASM
 	wasmPath := filepath.Join(testdataDir(), "echo_tool.wasm")
-	out, err = reg.Execute(ctx, RuntimeWASM, ToolInvocation{
+	out, err := reg.Execute(ctx, RuntimeWASM, ToolInvocation{
 		Name: "echo", Input: []byte(`{"name":"echo","arguments":{"message":"from registry"}}`), Module: wasmPath,
 	}, DefaultCapabilities())
 	if err != nil {
