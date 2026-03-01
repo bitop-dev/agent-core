@@ -32,10 +32,12 @@ func rootCmd() *cobra.Command {
 	}
 
 	root.AddCommand(runCmd())
+	root.AddCommand(chatCmd())
 	root.AddCommand(versionCmd())
 	root.AddCommand(toolsCmd())
 	root.AddCommand(modelsCmd())
 	root.AddCommand(validateCmd())
+	root.AddCommand(sessionsCmd())
 
 	return root
 }

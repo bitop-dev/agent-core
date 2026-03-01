@@ -10,27 +10,17 @@ import (
 	"github.com/bitop-dev/agent-core/internal/tool"
 )
 
-// loop is the main agent turn loop.
-func (a *Agent) loop(ctx context.Context, mission string, ch chan<- RunEvent) {
+// loop is the main agent turn loop. It takes initial history (which must
+// end with a user message) and runs until the LLM produces a text response
+// with no tool calls, or a limit is hit.
+func (a *Agent) loop(ctx context.Context, history []provider.Message, ch chan<- RunEvent) {
 	startTime := time.Now()
 	totalTurns := 0
 
 	ch <- RunEvent{Type: EventAgentStart}
 
-	// Build system prompt and tool specs once
 	systemPrompt := a.buildSystemPrompt()
 	toolSpecs := a.buildToolSpecs()
-
-	// Conversation history
-	var history []provider.Message
-
-	// First message is the user's mission
-	history = append(history, provider.Message{
-		Role: provider.RoleUser,
-		Content: []provider.ContentBlock{
-			{Type: provider.ContentText, Text: mission},
-		},
-	})
 
 	for {
 		totalTurns++
@@ -42,6 +32,7 @@ func (a *Agent) loop(ctx context.Context, mission string, ch chan<- RunEvent) {
 				TotalTurns: totalTurns - 1,
 				StopReason: "max_turns",
 				DurationMs: time.Since(startTime).Milliseconds(),
+				History:    history,
 			}}
 			return
 		}
@@ -53,6 +44,7 @@ func (a *Agent) loop(ctx context.Context, mission string, ch chan<- RunEvent) {
 				TotalTurns: totalTurns,
 				StopReason: "timeout",
 				DurationMs: time.Since(startTime).Milliseconds(),
+				History:    history,
 			}}
 			return
 		default:
@@ -74,6 +66,7 @@ func (a *Agent) loop(ctx context.Context, mission string, ch chan<- RunEvent) {
 				TotalTurns: totalTurns,
 				StopReason: "error",
 				DurationMs: time.Since(startTime).Milliseconds(),
+				History:    history,
 			}}
 			return
 		}
@@ -111,7 +104,7 @@ func (a *Agent) loop(ctx context.Context, mission string, ch chan<- RunEvent) {
 			case provider.EventUsage:
 				if event.Usage != nil {
 					a.observer.OnEvent(observer.Event{
-						Type: observer.ObsTokenUsage,
+						Type:    observer.ObsTokenUsage,
 						Payload: event.Usage,
 					})
 				}
@@ -125,6 +118,7 @@ func (a *Agent) loop(ctx context.Context, mission string, ch chan<- RunEvent) {
 					TotalTurns: totalTurns,
 					StopReason: "error",
 					DurationMs: time.Since(startTime).Milliseconds(),
+					History:    history,
 				}}
 				return
 			}
@@ -153,6 +147,7 @@ func (a *Agent) loop(ctx context.Context, mission string, ch chan<- RunEvent) {
 				TotalTurns: totalTurns,
 				StopReason: "complete",
 				DurationMs: time.Since(startTime).Milliseconds(),
+				History:    history,
 			}}
 			return
 		}

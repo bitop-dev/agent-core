@@ -1,5 +1,7 @@
 package agent
 
+import "github.com/bitop-dev/agent-core/internal/provider"
+
 // RunEvent is emitted by the agent during execution.
 // Consumers (CLI renderer, WebSocket streamer) read from the event channel.
 type RunEvent struct {
@@ -47,11 +49,12 @@ type ToolCallEndData struct {
 	DurationMs int64
 }
 
-// AgentEndData carries final run statistics.
+// AgentEndData carries final run statistics and the updated conversation history.
 type AgentEndData struct {
 	TotalTurns    int
 	TotalTokens   int
 	TotalCostUSD  float64
 	DurationMs    int64
 	StopReason    string // "complete" | "max_turns" | "timeout" | "error" | "loop_detected"
+	History       []provider.Message // updated history after this run
 }

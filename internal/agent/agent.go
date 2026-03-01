@@ -77,10 +77,37 @@ func (b *Builder) Build() (*Agent, error) {
 // Run executes the agent turn loop with the given mission.
 // It streams RunEvents through the returned channel.
 func (a *Agent) Run(ctx context.Context, mission string) (<-chan RunEvent, error) {
+	history := []provider.Message{
+		{
+			Role:    provider.RoleUser,
+			Content: []provider.ContentBlock{{Type: provider.ContentText, Text: mission}},
+		},
+	}
+	return a.RunWithHistory(ctx, history)
+}
+
+// RunWithHistory executes the agent turn loop with existing conversation history.
+// The last message should be a user message. Returns events via channel.
+// Use HistoryFromEvents to extract the updated history after the run completes.
+func (a *Agent) RunWithHistory(ctx context.Context, history []provider.Message) (<-chan RunEvent, error) {
+	if len(history) == 0 {
+		return nil, fmt.Errorf("history must contain at least one message")
+	}
+
 	ch := make(chan RunEvent, 64)
 	go func() {
 		defer close(ch)
-		a.loop(ctx, mission, ch)
+		a.loop(ctx, history, ch)
 	}()
 	return ch, nil
+}
+
+// SystemPrompt returns the constructed system prompt (for session persistence).
+func (a *Agent) SystemPrompt() string {
+	return a.buildSystemPrompt()
+}
+
+// ToolSpecs returns tool definitions (for session persistence).
+func (a *Agent) ToolSpecs() []provider.ToolSpec {
+	return a.buildToolSpecs()
 }
