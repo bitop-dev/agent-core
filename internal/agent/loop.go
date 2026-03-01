@@ -35,6 +35,8 @@ func (a *Agent) loop(ctx context.Context, history []provider.Message, ch chan<- 
 		contextWindow = info.ContextWindow
 	}
 
+	deferredRetries := 0
+
 	for {
 		totalTurns++
 		ch <- RunEvent{Type: EventTurnStart, Data: totalTurns}
@@ -175,8 +177,23 @@ func (a *Agent) loop(ctx context.Context, history []provider.Message, ch chan<- 
 			Content: assistantBlocks,
 		})
 
-		// If no tool calls, agent is done
+		// If no tool calls, check for deferred-action pattern before finishing.
+		// If the LLM says "I'll check X" but didn't emit a tool call, nudge it.
 		if len(toolCalls) == 0 {
+			if deferredRetries < maxDeferredRetries && LooksLikeDeferredAction(textContent) {
+				deferredRetries++
+				ch <- RunEvent{Type: EventDeferredAction, Data: textContent}
+				history = append(history, provider.Message{
+					Role: provider.RoleUser,
+					Content: []provider.ContentBlock{{
+						Type: provider.ContentText,
+						Text: deferredActionRetryPrompt,
+					}},
+				})
+				ch <- RunEvent{Type: EventTurnEnd}
+				continue // retry — the LLM should now emit a tool call or give a final answer
+			}
+
 			ch <- RunEvent{Type: EventTurnEnd}
 			ch <- RunEvent{Type: EventAgentEnd, Data: AgentEndData{
 				TotalTurns: totalTurns,
@@ -186,6 +203,9 @@ func (a *Agent) loop(ctx context.Context, history []provider.Message, ch chan<- 
 			}}
 			return
 		}
+
+		// Reset deferred retry counter when tool calls are made
+		deferredRetries = 0
 
 		// Build tool calls and check approval for each
 		calls := make([]tool.Call, len(toolCalls))

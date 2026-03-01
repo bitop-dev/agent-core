@@ -29,6 +29,7 @@ const (
 	EventApprovalNeeded  RunEventType = "approval_needed"
 	EventApprovalDenied  RunEventType = "approval_denied"
 	EventHeartbeat       RunEventType = "heartbeat"
+	EventDeferredAction  RunEventType = "deferred_action"
 )
 
 // TextDeltaData carries a streaming text fragment.
