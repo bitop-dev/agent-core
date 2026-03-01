@@ -12,6 +12,7 @@ type AgentConfig struct {
 	Model          string            `yaml:"model"`
 	SystemPrompt   string            `yaml:"system_prompt"`
 	DefaultMission string            `yaml:"default_mission"`
+	SkillSources   []string          `yaml:"skill_sources"`
 	Skills         []SkillRef        `yaml:"skills"`
 	Tools          ToolsConfig       `yaml:"tools"`
 	MCP            MCPConfig         `yaml:"mcp"`
