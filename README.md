@@ -2,7 +2,7 @@
 
 A standalone Go binary for running AI agents from the command line. No database, no web UI, no Docker — just a binary, a YAML config, and an API key.
 
-> **Status**: Phase 1 complete — fully functional agent runtime with tools, skills, MCP, and safety features. 69 files, ~10K lines, 111 tests, 23 commits.
+> **Status**: Phase 1 complete + Phase 4 skill registry. 84 files, ~11K lines, 111 tests, 26 commits.
 
 ---
 
@@ -13,21 +13,21 @@ A standalone Go binary for running AI agents from the command line. No database,
 make build
 
 # Run a one-shot mission
-export ANTHROPIC_API_KEY=sk-...
-./bin/agent-core run --config examples/research-agent.yaml \
+export OPENAI_API_KEY=sk-...
+./bin/agent-core run -c examples/research-agent.yaml \
   --mission "What are the top Go testing frameworks in 2026?"
 
 # Interactive multi-turn chat
-./bin/agent-core chat --config examples/dev-agent.yaml
+./bin/agent-core chat -c examples/dev-agent.yaml
 
 # Pipe input
-echo "Summarize this directory" | ./bin/agent-core run --config examples/dev-agent.yaml
+echo "Summarize this directory" | ./bin/agent-core run -c examples/dev-agent.yaml
 
 # List tools configured for an agent
-./bin/agent-core tools --config examples/dev-agent.yaml
+./bin/agent-core tools -c examples/dev-agent.yaml
 
 # Validate a config file
-./bin/agent-core validate --config examples/research-agent.yaml
+./bin/agent-core validate examples/research-agent.yaml
 ```
 
 ---
@@ -96,8 +96,32 @@ Skills extend agents with domain-specific capabilities:
 - **SKILL.md format**: YAML frontmatter (metadata) + markdown body (injected into system prompt)
 - **Subprocess tools**: communicate via stdin/stdout JSON, language-agnostic
 - **Eligibility checks**: verify required binaries/env vars before loading
-- **Tiers**: bundled (compiled in) → local (`~/.agent-core/skills/`) → community (git URL)
+- **Remote registries**: install from any GitHub repo with `registry.json`
+- **Auto-install**: missing skills automatically fetched from `skill_sources` on agent run
 - **Per-agent config**: human controls `config`, LLM controls `arguments`
+
+#### Skill CLI
+
+```bash
+# Browse available skills from registries
+agent-core skill search
+
+# Install from default registry (bitop-dev/agent-platform-skills)
+agent-core skill install web_search
+agent-core skill install github
+
+# Install from a custom source
+agent-core skill install my_skill --source github.com/yourname/your-skills
+
+# Manage installed skills
+agent-core skill list          # show installed skills
+agent-core skill show web_search  # full details
+agent-core skill update web_search  # pull latest
+agent-core skill remove web_search
+
+# Validate a skill directory
+agent-core skill test ./my-skill/
+```
 
 ### MCP Support
 
@@ -147,7 +171,7 @@ Commands:
   run          Run an agent with a mission (non-interactive)
   chat         Interactive multi-turn chat (readline REPL, slash commands)
   tools        List tools configured for an agent
-  skill        Skill management (list, install, remove, new, test, audit)
+  skill        Skill management (list, show, install, remove, update, search, test)
   mcp          MCP server test command
   sessions     Session management (list, show, clear)
   validate     Validate agent config file
@@ -162,13 +186,19 @@ Commands:
 name: research-agent
 description: "Researches topics and produces summaries"
 
-provider: anthropic
-model: claude-sonnet-4-20250514
+provider: openai
+model: gpt-4o
 
 system_prompt: |
   You are a research assistant. When given a topic, search the web,
   read relevant sources, and produce a clear, cited summary.
 
+# Skill sources — any GitHub repo with registry.json
+skill_sources:
+  - github.com/bitop-dev/agent-platform-skills  # default (auto-used if omitted)
+  - github.com/mycorp/internal-skills            # custom private skills
+
+# Skills to load (auto-installed from sources if not found locally)
 skills:
   - web_search:
       backend: ddg
@@ -186,11 +216,6 @@ tools:
 
 max_turns: 20
 timeout_seconds: 300
-
-# Optional sandbox
-sandbox:
-  allowed_paths: ["/home/user/projects"]
-  denied_paths: ["/etc", "/var"]
 
 # Optional MCP servers
 mcp:
@@ -218,10 +243,7 @@ internal/
     approval.go         Approval manager
     heartbeat.go        Safety heartbeat
     deferred.go         Deferred-action detection
-    events.go           RunEvent types
-    context.go          Context window management
   provider/             LLM provider interface + implementations
-    provider.go         Provider/KeyRotatable interfaces
     openai.go           OpenAI Chat Completions (SSE streaming)
     anthropic.go        Anthropic Messages (SSE streaming)
     openai_responses.go OpenAI Responses API
@@ -233,19 +255,16 @@ internal/
     subprocess.go       Subprocess runner (stdin/stdout JSON)
     sandbox.go          Path/env sandboxing
     builtin/            8 core tool implementations
-  skill/                Skill loader
+  skill/                Skill loader + remote registry
     skill.go            Skill types
     loader.go           ParseSkillMD, LoadAll, CheckEligibility
+    remote.go           FetchRegistry, InstallSkill, RemoveSkill, UpdateSkill
   config/               YAML config parsing + validation
   models/               Model catalog (12 models, context windows, pricing)
   observer/             Telemetry interface (Noop, Log, Cost, Multi)
   session/              JSONL session persistence
   output/               Terminal renderers (text, JSON, JSONL)
-  mcp/                  MCP client
-    client.go           MCP client (initialize, list_tools, call_tool)
-    transport.go        stdio + HTTP/SSE transports
-    adapter.go          MCP → Tool interface adapter
-    protocol.go         MCP JSON-RPC types
+  mcp/                  MCP client (stdio + HTTP transports)
 pkg/agent/              Public API for embedding
   agent.go              Builder pattern, QuickRun, provider factories
 examples/               Example YAML configs
@@ -297,14 +316,14 @@ Tests cover: providers (error classification, reliable provider), agent (compact
 
 | Repo | Purpose | Status |
 |---|---|---|
-| **agent-core** (this repo) | Standalone CLI + Go library | ✅ 111 tests |
-| [agent-platform-api](https://github.com/bitop-dev/agent-platform-api) | REST API server | ✅ 22 tests |
-| [agent-platform-web](https://github.com/bitop-dev/agent-platform-web) | Next.js web portal | ✅ 12 pages |
+| **agent-core** (this repo) | Standalone CLI + Go library | ✅ 111 tests, 26 commits |
+| [agent-platform-api](https://github.com/bitop-dev/agent-platform-api) | Go Fiber REST API | ✅ 22 tests, 11 commits |
+| [agent-platform-web](https://github.com/bitop-dev/agent-platform-web) | Bun + Vite + React web portal | ✅ 11 pages, 6 commits |
+| [agent-platform-skills](https://github.com/bitop-dev/agent-platform-skills) | Community skill registry | ✅ 5 skills, 2 commits |
 | [agent-platform-docs](https://github.com/bitop-dev/agent-platform-docs) | Architecture & planning | ✅ Comprehensive |
-| **skills** | Community skill registry | 🔜 Coming soon |
 
 ---
 
 ## License
 
-TBD
+MIT
