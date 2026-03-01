@@ -57,6 +57,7 @@ func runCmd() *cobra.Command {
 		baseURL      string
 		apiKey       string
 		formatFlag   string
+		approveFlag  bool
 	)
 
 	cmd := &cobra.Command{
@@ -167,14 +168,29 @@ func runCmd() *cobra.Command {
 			reliableCfg := provider.DefaultReliableConfig()
 			rp := provider.NewReliable(p, reliableCfg)
 
+			// Set up cost tracking
+			costTracker := observer.NewCostTracker(cfg.Model)
+
 			// Build agent
-			a, err := agent.NewBuilder().
+			builder := agent.NewBuilder().
 				WithConfig(cfg).
 				WithProvider(rp).
 				WithTools(engine).
 				WithSkills(skills).
-				WithObserver(observer.Noop{}).
-				Build()
+				WithObserver(costTracker)
+
+			// Wire approval mode
+			if approveFlag || cfg.Approval.Policy == "always" || cfg.Approval.Policy == "list" {
+				approvalCfg := agent.ApprovalConfig{
+					Mode:      agent.ApprovalSupervised,
+					AlwaysAsk: cfg.Approval.RequiredTools,
+				}
+				// Auto-approve read-only tools by default
+				approvalCfg.AutoApprove = []string{"read_file", "list_dir", "grep", "tasks"}
+				builder = builder.WithApproval(approvalCfg)
+			}
+
+			a, err := builder.Build()
 			if err != nil {
 				return fmt.Errorf("build agent: %w", err)
 			}
@@ -209,6 +225,13 @@ func runCmd() *cobra.Command {
 				renderer.Render(event)
 			}
 			renderer.Flush()
+
+			// Show cost summary (text mode only)
+			if format == "text" {
+				if summary := costTracker.Summary(); summary != "" {
+					fmt.Fprintf(os.Stderr, "\033[90m    %s\033[0m\n", summary)
+				}
+			}
 			return nil
 		},
 	}
@@ -216,10 +239,11 @@ func runCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&configPath, "config", "c", "", "Path to agent YAML config")
 	cmd.Flags().StringVarP(&mission, "mission", "m", "", "Mission for the agent")
 	cmd.Flags().StringVar(&modelFlag, "model", "", "Override model from config")
-	cmd.Flags().StringVarP(&providerFlag, "provider", "p", "", "Provider: openai or anthropic (auto-detected from model)")
+	cmd.Flags().StringVarP(&providerFlag, "provider", "p", "", "Provider: openai, anthropic, ollama, openai-responses (auto-detected from model)")
 	cmd.Flags().StringVar(&baseURL, "base-url", "", "Override API base URL")
 	cmd.Flags().StringVar(&apiKey, "api-key", "", "API key (or set OPENAI_API_KEY / ANTHROPIC_API_KEY)")
 	cmd.Flags().StringVarP(&formatFlag, "format", "f", "", "Output format: text (default), json, jsonl")
+	cmd.Flags().BoolVar(&approveFlag, "approve", false, "Enable approval prompts for dangerous tools (bash, write_file, etc.)")
 
 	return cmd
 }
@@ -229,6 +253,11 @@ func detectProvider(model string) string {
 	m := strings.ToLower(model)
 	if strings.Contains(m, "claude") || strings.Contains(m, "sonnet") || strings.Contains(m, "opus") || strings.Contains(m, "haiku") {
 		return "anthropic"
+	}
+	if strings.Contains(m, "llama") || strings.Contains(m, "mistral") || strings.Contains(m, "gemma") ||
+		strings.Contains(m, "phi") || strings.Contains(m, "qwen") || strings.Contains(m, "deepseek") ||
+		strings.Contains(m, "codestral") || strings.Contains(m, "starcoder") {
+		return "ollama"
 	}
 	return "openai" // default: OpenAI-compatible
 }
@@ -257,6 +286,23 @@ func createProvider(name, apiKey, baseURL string) provider.Provider {
 			BaseURL: url,
 			APIKey:  apiKey,
 		})
+	case "ollama":
+		url := baseURL
+		if url == "" {
+			url = os.Getenv("OLLAMA_BASE_URL")
+		}
+		if url == "" {
+			url = "http://localhost:11434/v1"
+		}
+		// Ollama doesn't require an API key but the OpenAI client needs one
+		key := apiKey
+		if key == "" {
+			key = "ollama"
+		}
+		return provider.NewOpenAI(provider.OpenAIConfig{
+			BaseURL: url,
+			APIKey:  key,
+		})
 	default: // "openai" and anything else
 		url := baseURL
 		if url == "" {
@@ -270,25 +316,111 @@ func createProvider(name, apiKey, baseURL string) provider.Provider {
 }
 
 // registerBuiltins adds core tools to the engine based on config.
-// If no tools are configured, all tools except bash are registered.
+// If no tools are configured, all tools are registered (bash is opt-out = on by default).
 // If tools.core is specified, only those tools are registered.
-// bash is opt-out: included by default unless tools.core is set and bash is excluded.
+// Sandbox settings are parsed from tool configs (allowed_paths, denied_paths, etc.)
 func registerBuiltins(engine *tool.Engine, cfg *config.AgentConfig) {
-	allTools := builtin.ByName()
+	// Build sandbox policy from config
+	sandbox := buildSandboxPolicy(cfg)
+
+	opts := builtin.BuiltinOptions{
+		TaskStore: builtin.NewTaskStore(),
+	}
+	if sandbox != nil {
+		opts.Sandbox = sandbox
+		engine.Sandbox = *sandbox
+	}
+
+	// Parse working dir from bash config
+	if bashCfg, ok := cfg.Tools.Core["bash"]; ok {
+		if wd, ok := bashCfg["working_dir"].(string); ok {
+			opts.WorkingDir = wd
+		}
+	}
+
+	allTools := builtin.ByNameWithOptions(opts)
 
 	if len(cfg.Tools.Core) == 0 {
-		// No tool config — register everything (bash opt-out means it's on by default)
 		for _, t := range allTools {
 			engine.Register(t)
 		}
 		return
 	}
 
-	// Register only configured tools
 	for name := range cfg.Tools.Core {
+		// Check for explicit disable
+		if toolCfg, ok := cfg.Tools.Core[name]; ok {
+			if enabled, ok := toolCfg["enabled"].(bool); ok && !enabled {
+				continue
+			}
+		}
 		if t, ok := allTools[name]; ok {
 			engine.Register(t)
 		}
+	}
+}
+
+// buildSandboxPolicy creates a SandboxPolicy from the agent config.
+// Returns nil if no sandbox settings are configured.
+func buildSandboxPolicy(cfg *config.AgentConfig) *tool.SandboxPolicy {
+	var hasSettings bool
+	p := tool.DefaultSandboxPolicy()
+
+	// Check for global sandbox settings in any tool config
+	for _, toolCfg := range cfg.Tools.Core {
+		if paths, ok := toolCfg["allowed_paths"]; ok {
+			if list, ok := toStringSlice(paths); ok {
+				p.AllowedPaths = list
+				hasSettings = true
+			}
+		}
+		if paths, ok := toolCfg["denied_paths"]; ok {
+			if list, ok := toStringSlice(paths); ok {
+				p.DeniedPaths = list
+				hasSettings = true
+			}
+		}
+		if keys, ok := toolCfg["allowed_env"]; ok {
+			if list, ok := toStringSlice(keys); ok {
+				p.AllowedEnvKeys = list
+				hasSettings = true
+			}
+		}
+		if maxBytes, ok := toolCfg["max_output_bytes"]; ok {
+			if v, ok := maxBytes.(int); ok {
+				p.MaxOutputBytes = v
+				hasSettings = true
+			}
+		}
+		if timeout, ok := toolCfg["timeout_seconds"]; ok {
+			if v, ok := timeout.(int); ok {
+				p.DefaultTimeoutSec = v
+				hasSettings = true
+			}
+		}
+	}
+
+	if !hasSettings {
+		return nil
+	}
+	return &p
+}
+
+// toStringSlice converts an any (from YAML) to []string.
+func toStringSlice(v any) ([]string, bool) {
+	switch val := v.(type) {
+	case []any:
+		result := make([]string, 0, len(val))
+		for _, item := range val {
+			if s, ok := item.(string); ok {
+				result = append(result, s)
+			}
+		}
+		return result, len(result) > 0
+	case []string:
+		return val, len(val) > 0
+	default:
+		return nil, false
 	}
 }
 
