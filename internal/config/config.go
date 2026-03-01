@@ -47,11 +47,12 @@ type MCPConfig struct {
 
 // MCPServer is a single MCP server connection.
 type MCPServer struct {
-	Name           string   `yaml:"name"`
-	Transport      string   `yaml:"transport"` // stdio | sse
-	Command        []string `yaml:"command"`
-	URL            string   `yaml:"url"`
-	TimeoutSeconds int      `yaml:"timeout_seconds"`
+	Name           string            `yaml:"name"`
+	Transport      string            `yaml:"transport"` // stdio | http | sse | streamable-http
+	Command        []string          `yaml:"command"`
+	URL            string            `yaml:"url"`
+	Headers        map[string]string `yaml:"headers"`
+	TimeoutSeconds int               `yaml:"timeout_seconds"`
 }
 
 // ContextConfig controls context window management.

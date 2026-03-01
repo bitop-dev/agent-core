@@ -12,6 +12,7 @@ import (
 
 	"github.com/bitop-dev/agent-core/internal/agent"
 	"github.com/bitop-dev/agent-core/internal/config"
+	"github.com/bitop-dev/agent-core/internal/mcp"
 	"github.com/bitop-dev/agent-core/internal/observer"
 	"github.com/bitop-dev/agent-core/internal/output"
 	"github.com/bitop-dev/agent-core/internal/provider"
@@ -40,6 +41,7 @@ func rootCmd() *cobra.Command {
 	root.AddCommand(modelsCmd())
 	root.AddCommand(validateCmd())
 	root.AddCommand(versionCmd())
+	root.AddCommand(mcpCmd())
 
 	return root
 }
@@ -138,6 +140,27 @@ func runCmd() *cobra.Command {
 			skills, err := loadSkills(cfg, engine)
 			if err != nil {
 				return fmt.Errorf("load skills: %w", err)
+			}
+
+			// Connect MCP servers
+			if len(cfg.MCP.Servers) > 0 {
+				mcpClients, mcpErrs := mcp.RegisterAll(cfg.MCP.Servers, engine)
+				for _, e := range mcpErrs {
+					fmt.Fprintf(os.Stderr, "\033[33m⚠ %v\033[0m\n", e)
+				}
+				// Close MCP clients when done
+				defer func() {
+					for _, c := range mcpClients {
+						c.Close()
+					}
+				}()
+				if len(mcpClients) > 0 {
+					total := 0
+					for _, c := range mcpClients {
+						total += len(c.Tools())
+					}
+					fmt.Fprintf(os.Stderr, "\033[90m✓ %d MCP server(s) connected, %d tool(s)\033[0m\n", len(mcpClients), total)
+				}
 			}
 
 			// Wrap provider with reliability layer
