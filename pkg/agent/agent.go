@@ -202,6 +202,28 @@ func NewToolEngineWithOptions(opts builtin.BuiltinOptions) *ToolEngine {
 	return e
 }
 
+// ─── Skill helpers ───────────────────────────────────────────────────────────
+
+// NewSkill creates a Skill from name, instructions, and optional description.
+// Used by platform-api to create skills from DB records without needing local files.
+func NewSkill(name, description, instructions string) *Skill {
+	return &skill.Skill{
+		Name:         name,
+		Description:  description,
+		Instructions: instructions,
+	}
+}
+
+// BuildSkillPrompt produces the system prompt fragment for a set of skills.
+func BuildSkillPrompt(skills []*Skill) string {
+	return skill.BuildSystemPromptFragment(skills)
+}
+
+// ParseSkillMD parses a SKILL.md file into a Skill struct.
+func ParseSkillMD(data []byte) (*Skill, error) {
+	return skill.ParseSkillMD(data)
+}
+
 // ─── Quick run ───────────────────────────────────────────────────────────────
 
 // QuickRun is a convenience function for running a one-shot agent.
