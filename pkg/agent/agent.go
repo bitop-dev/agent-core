@@ -304,13 +304,25 @@ func RegisterSkillTools(
 
 	for _, sk := range loaded {
 		for _, td := range sk.Tools {
-			execPath, execType := skill.FindToolExec(sk.Dir, td.Name)
-			if execPath == "" {
-				continue
+			var module string
+			var rt sandbox.RuntimeType
+
+			if sk.Runtime == "container" && sk.Image != "" {
+				module = sk.Image
+				rt = sandbox.RuntimeContainer
+			} else {
+				execPath, execType := skill.FindToolExec(sk.Dir, td.Name)
+				if execPath == "" {
+					continue
+				}
+				module = execPath
+				rt = resolveRuntime(sk.Runtime, execType, defaultMode)
 			}
 
-			// Determine runtime: skill declaration > exec type > default mode
-			rt := resolveRuntime(sk.Runtime, execType, defaultMode)
+			workDir := "."
+			if rt == sandbox.RuntimeContainer {
+				workDir = "/tmp"
+			}
 
 			st := tool.NewSandboxedTool(tool.SandboxedToolConfig{
 				Def: tool.Definition{
@@ -319,8 +331,8 @@ func RegisterSkillTools(
 					InputSchema: json.RawMessage(td.Parameters),
 				},
 				Runtime:  rt,
-				Module:   execPath,
-				WorkDir:  ".",
+				Module:   module,
+				WorkDir:  workDir,
 				Caps:     caps,
 				Registry: reg,
 			})

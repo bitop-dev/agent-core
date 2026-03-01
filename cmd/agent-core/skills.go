@@ -172,13 +172,26 @@ func loadSkills(cfg *config.AgentConfig, engine *tool.Engine) ([]*skill.Skill, e
 	// Register skill tools in the engine
 	for _, sk := range skills {
 		for _, td := range sk.Tools {
-			execPath, execType := skill.FindToolExec(sk.Dir, td.Name)
-			if execPath == "" {
-				fmt.Fprintf(os.Stderr, "\033[33mwarning: no executable found for tool %s in skill %s\033[0m\n", td.Name, sk.Name)
-				continue
-			}
+			// Determine the module reference and runtime type.
+			// For container skills, Module is the image name.
+			// For WASM skills, Module is the .wasm file path.
+			var module string
+			var rt sandbox.RuntimeType
 
-			rt := resolveToolRuntime(sk.Runtime, execType, defaultMode)
+			if sk.Runtime == "container" && sk.Image != "" {
+				// Container skill — Module is the Docker/Podman image
+				module = sk.Image
+				rt = sandbox.RuntimeContainer
+			} else {
+				// WASM or auto-detect — find the .wasm file
+				execPath, execType := skill.FindToolExec(sk.Dir, td.Name)
+				if execPath == "" {
+					fmt.Fprintf(os.Stderr, "\033[33mwarning: no executable found for tool %s in skill %s\033[0m\n", td.Name, sk.Name)
+					continue
+				}
+				module = execPath
+				rt = resolveToolRuntime(sk.Runtime, execType, defaultMode)
+			}
 
 			if sandboxRegistry == nil {
 				fmt.Fprintf(os.Stderr, "\033[33mwarning: sandbox not initialized, cannot register tool %s\033[0m\n", td.Name)
@@ -189,6 +202,12 @@ func loadSkills(cfg *config.AgentConfig, engine *tool.Engine) ([]*skill.Skill, e
 				continue
 			}
 
+			// Containers need absolute workdir; WASM doesn't use it
+			workDir := "."
+			if rt == sandbox.RuntimeContainer {
+				workDir = "/tmp"
+			}
+
 			st := tool.NewSandboxedTool(tool.SandboxedToolConfig{
 				Def: tool.Definition{
 					Name:        td.Name,
@@ -196,8 +215,8 @@ func loadSkills(cfg *config.AgentConfig, engine *tool.Engine) ([]*skill.Skill, e
 					InputSchema: json.RawMessage(td.Parameters),
 				},
 				Runtime:     rt,
-				Module:      execPath,
-				WorkDir:     ".",
+				Module:      module,
+				WorkDir:     workDir,
 				Caps:        caps,
 				Registry:    sandboxRegistry,
 				SkillConfig: skillConfigs[sk.Name],
