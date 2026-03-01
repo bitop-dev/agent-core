@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bitop-dev/agent-core/internal/config"
+	"github.com/bitop-dev/agent-core/internal/sandbox"
 	"github.com/bitop-dev/agent-core/internal/skill"
 	"github.com/bitop-dev/agent-core/internal/tool"
 )
@@ -21,9 +23,89 @@ func defaultSkillDirs() []string {
 	}
 }
 
+// sandboxRegistry is the global sandbox registry for WASM/container runtimes.
+// Initialized lazily when a skill needs it.
+var sandboxRegistry *sandbox.Registry
+
+// initSandboxRegistry creates the sandbox runtimes based on config.
+// Returns a cleanup function to close runtimes.
+func initSandboxRegistry(cfg *config.AgentConfig) func() {
+	sandboxRegistry = sandbox.NewRegistry()
+
+	// Always register subprocess (fallback)
+	sandboxRegistry.Register(sandbox.NewSubprocessRuntime())
+
+	// Initialize WASM runtime (always available — pure Go, no deps)
+	wasmRT, err := sandbox.NewWASMRuntime(context.Background())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\033[33mwarning: WASM runtime unavailable: %v\033[0m\n", err)
+	} else {
+		sandboxRegistry.Register(wasmRT)
+		fmt.Fprintf(os.Stderr, "\033[90m✓ WASM sandbox runtime ready\033[0m\n")
+	}
+
+	// Initialize container runtime if available
+	containerRT, err := sandbox.NewContainerRuntime()
+	if err == nil {
+		sandboxRegistry.Register(containerRT)
+		fmt.Fprintf(os.Stderr, "\033[90m✓ Container sandbox runtime ready (%s)\033[0m\n", containerRT.Engine())
+	}
+
+	return func() {
+		sandboxRegistry.Close()
+	}
+}
+
+// buildSandboxCaps converts agent config to sandbox capabilities.
+func buildSandboxCaps(cfg *config.AgentConfig) sandbox.Capabilities {
+	caps := sandbox.DefaultCapabilities()
+	if len(cfg.Sandbox.AllowedPaths) > 0 {
+		caps.AllowedPaths = cfg.Sandbox.AllowedPaths
+	}
+	if len(cfg.Sandbox.ReadOnlyPaths) > 0 {
+		caps.ReadOnlyPaths = cfg.Sandbox.ReadOnlyPaths
+	}
+	if len(cfg.Sandbox.AllowedHosts) > 0 {
+		caps.AllowedHosts = cfg.Sandbox.AllowedHosts
+	}
+	if cfg.Sandbox.MaxMemoryMB > 0 {
+		caps.MaxMemoryMB = cfg.Sandbox.MaxMemoryMB
+	}
+	if cfg.Sandbox.MaxTimeoutSec > 0 {
+		caps.MaxTimeoutSec = cfg.Sandbox.MaxTimeoutSec
+	}
+	return caps
+}
+
+// resolveToolRuntime determines which sandbox runtime to use for a tool.
+func resolveToolRuntime(skillRuntime, execType, defaultMode string) sandbox.RuntimeType {
+	// Skill explicitly declares runtime
+	switch skillRuntime {
+	case "wasm":
+		return sandbox.RuntimeWASM
+	case "container":
+		return sandbox.RuntimeContainer
+	case "subprocess":
+		return sandbox.RuntimeSubprocess
+	}
+	// Auto-detect from executable type
+	if execType == "wasm" {
+		return sandbox.RuntimeWASM
+	}
+	// Agent default
+	switch defaultMode {
+	case "wasm":
+		return sandbox.RuntimeWASM
+	case "container":
+		return sandbox.RuntimeContainer
+	}
+	return sandbox.RuntimeSubprocess
+}
+
 // loadSkills loads skills referenced in the agent config.
 // Returns loaded skills and registers their tools in the engine.
 // If a skill isn't found locally, it tries to install from skill_sources.
+// WASM skills are dispatched through the sandbox runtime; others use subprocess.
 func loadSkills(cfg *config.AgentConfig, engine *tool.Engine) ([]*skill.Skill, error) {
 	if len(cfg.Skills) == 0 {
 		return nil, nil
@@ -90,52 +172,61 @@ func loadSkills(cfg *config.AgentConfig, engine *tool.Engine) ([]*skill.Skill, e
 		fmt.Fprintf(os.Stderr, "\033[33mwarning: %s\033[0m\n", w)
 	}
 
+	// Build sandbox capabilities from config
+	caps := buildSandboxCaps(cfg)
+	defaultMode := cfg.Sandbox.Mode
+
 	// Register skill tools in the engine
 	for _, sk := range skills {
 		for _, td := range sk.Tools {
-			// Find the tool executable
-			execPath := findToolExecutable(sk.Dir, td.Name)
+			execPath, execType := skill.FindToolExec(sk.Dir, td.Name)
 			if execPath == "" {
 				fmt.Fprintf(os.Stderr, "\033[33mwarning: no executable found for tool %s in skill %s\033[0m\n", td.Name, sk.Name)
 				continue
 			}
 
-			// Build subprocess tool config
+			rt := resolveToolRuntime(sk.Runtime, execType, defaultMode)
+
+			// Use sandbox if registry is initialized and runtime is available
+			if sandboxRegistry != nil && (rt == sandbox.RuntimeWASM || rt == sandbox.RuntimeContainer) {
+				if _, err := sandboxRegistry.Get(rt); err == nil {
+					st := tool.NewSandboxedTool(tool.SandboxedToolConfig{
+						Def: tool.Definition{
+							Name:        td.Name,
+							Description: td.Description,
+							InputSchema: json.RawMessage(td.Parameters),
+						},
+						Runtime:     rt,
+						Module:      execPath,
+						WorkDir:     ".",
+						Caps:        caps,
+						Registry:    sandboxRegistry,
+						SkillConfig: skillConfigs[sk.Name],
+					})
+					engine.Register(st)
+					fmt.Fprintf(os.Stderr, "\033[90m  ✓ %s → %s sandbox\033[0m\n", td.Name, rt)
+					continue
+				}
+			}
+
+			// Fallback: subprocess
 			subCfg := tool.SubprocessConfig{
 				Command:        execPath,
 				TimeoutSeconds: 30,
 				WorkDir:        ".",
 				SkillConfig:    skillConfigs[sk.Name],
 			}
-
 			st := tool.NewSubprocessTool(tool.Definition{
 				Name:        td.Name,
 				Description: td.Description,
 				InputSchema: json.RawMessage(td.Parameters),
 			}, subCfg)
-
 			engine.Register(st)
+			fmt.Fprintf(os.Stderr, "\033[90m  ✓ %s → subprocess\033[0m\n", td.Name)
 		}
 	}
 
 	return skills, nil
-}
-
-// findToolExecutable looks for an executable script/binary for a tool.
-// Checks tools/<name>.py, tools/<name>.sh, tools/<name> (in that order).
-func findToolExecutable(skillDir, toolName string) string {
-	toolsDir := filepath.Join(skillDir, "tools")
-	candidates := []string{
-		filepath.Join(toolsDir, toolName+".py"),
-		filepath.Join(toolsDir, toolName+".sh"),
-		filepath.Join(toolsDir, toolName),
-	}
-	for _, path := range candidates {
-		if info, err := os.Stat(path); err == nil && !info.IsDir() {
-			return path
-		}
-	}
-	return ""
 }
 
 // skillCmd handles skill management commands.

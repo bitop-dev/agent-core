@@ -137,6 +137,10 @@ func runCmd() *cobra.Command {
 			engine := tool.NewEngine()
 			registerBuiltins(engine, cfg)
 
+			// Initialize sandbox runtimes
+			cleanupSandbox := initSandboxRegistry(cfg)
+			defer cleanupSandbox()
+
 			// Load skills
 			skills, err := loadSkills(cfg, engine)
 			if err != nil {
