@@ -37,7 +37,15 @@ func NewWASMRuntime(ctx context.Context) (*WASMRuntime, error) {
 		return nil, fmt.Errorf("wasi init: %w", err)
 	}
 
-	return &WASMRuntime{engine: rt}, nil
+	w := &WASMRuntime{engine: rt}
+
+	// Register host functions once at init (not per-execution).
+	if err := w.registerHostFunctions(ctx); err != nil {
+		rt.Close(ctx)
+		return nil, fmt.Errorf("register host functions: %w", err)
+	}
+
+	return w, nil
 }
 
 func (w *WASMRuntime) Type() RuntimeType {
@@ -63,12 +71,6 @@ func (w *WASMRuntime) Execute(ctx context.Context, inv ToolInvocation, caps Capa
 	wasmBytes, err := os.ReadFile(inv.Module)
 	if err != nil {
 		return nil, fmt.Errorf("read wasm module %q: %w", inv.Module, err)
-	}
-
-	// Register host functions BEFORE compiling the guest module.
-	// This creates the "agent_host" import module that WASM tools can call.
-	if err := w.registerHostFunctions(ctx); err != nil {
-		return nil, fmt.Errorf("register host functions: %w", err)
 	}
 
 	// Compile the module
