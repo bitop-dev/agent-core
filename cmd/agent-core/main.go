@@ -13,6 +13,7 @@ import (
 	"github.com/bitop-dev/agent-core/internal/agent"
 	"github.com/bitop-dev/agent-core/internal/config"
 	"github.com/bitop-dev/agent-core/internal/observer"
+	"github.com/bitop-dev/agent-core/internal/output"
 	"github.com/bitop-dev/agent-core/internal/provider"
 	"github.com/bitop-dev/agent-core/internal/tool"
 	"github.com/bitop-dev/agent-core/internal/tool/builtin"
@@ -53,6 +54,7 @@ func runCmd() *cobra.Command {
 		providerFlag string
 		baseURL      string
 		apiKey       string
+		formatFlag   string
 	)
 
 	cmd := &cobra.Command{
@@ -169,8 +171,22 @@ func runCmd() *cobra.Command {
 				return fmt.Errorf("run agent: %w", err)
 			}
 
-			// Render events to terminal
-			return renderEvents(events)
+			// Select renderer based on format
+			format := formatFlag
+			if format == "" {
+				format = cfg.Output.Format
+			}
+			if format == "" {
+				format = "text"
+			}
+
+			renderer := createRenderer(format)
+
+			for event := range events {
+				renderer.Render(event)
+			}
+			renderer.Flush()
+			return nil
 		},
 	}
 
@@ -180,6 +196,7 @@ func runCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&providerFlag, "provider", "p", "", "Provider: openai or anthropic (auto-detected from model)")
 	cmd.Flags().StringVar(&baseURL, "base-url", "", "Override API base URL")
 	cmd.Flags().StringVar(&apiKey, "api-key", "", "API key (or set OPENAI_API_KEY / ANTHROPIC_API_KEY)")
+	cmd.Flags().StringVarP(&formatFlag, "format", "f", "", "Output format: text (default), json, jsonl")
 
 	return cmd
 }
@@ -252,51 +269,16 @@ func registerBuiltins(engine *tool.Engine, cfg *config.AgentConfig) {
 	}
 }
 
-// renderEvents prints agent events to the terminal.
-func renderEvents(events <-chan agent.RunEvent) error {
-	for event := range events {
-		switch event.Type {
-		case agent.EventTextDelta:
-			if data, ok := event.Data.(agent.TextDeltaData); ok {
-				fmt.Print(data.Text)
-			}
-
-		case agent.EventToolCallStart:
-			if data, ok := event.Data.(agent.ToolCallStartData); ok {
-				fmt.Fprintf(os.Stderr, "\n\033[36m⚙ %s\033[0m(%s)\n", data.ToolName, truncate(data.Arguments, 100))
-			}
-
-		case agent.EventToolCallEnd:
-			if data, ok := event.Data.(agent.ToolCallEndData); ok {
-				if data.IsError {
-					fmt.Fprintf(os.Stderr, "\033[31m✗ %s: %s\033[0m\n", data.ToolName, truncate(data.Content, 200))
-				} else {
-					fmt.Fprintf(os.Stderr, "\033[32m✓ %s\033[0m (%s)\n", data.ToolName, truncate(data.Content, 100))
-				}
-			}
-
-		case agent.EventContextCompact:
-			fmt.Fprintf(os.Stderr, "\033[33m⟳ compacting conversation history...\033[0m\n")
-
-		case agent.EventError:
-			fmt.Fprintf(os.Stderr, "\033[31merror: %v\033[0m\n", event.Data)
-
-		case agent.EventAgentEnd:
-			if data, ok := event.Data.(agent.AgentEndData); ok {
-				fmt.Fprintf(os.Stderr, "\n\033[90m--- %s | %d turns | %dms ---\033[0m\n",
-					data.StopReason, data.TotalTurns, data.DurationMs)
-			}
-		}
+// createRenderer builds the appropriate renderer for the format.
+func createRenderer(format string) output.Renderer {
+	switch format {
+	case "json":
+		return output.NewJSONRenderer(os.Stdout)
+	case "jsonl":
+		return output.NewJSONLRenderer(os.Stdout)
+	default:
+		return output.NewTextRenderer(os.Stdout, os.Stderr)
 	}
-	return nil
-}
-
-func truncate(s string, max int) string {
-	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) > max {
-		return s[:max] + "…"
-	}
-	return s
 }
 
 // --- version ---
