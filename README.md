@@ -2,7 +2,7 @@
 
 A standalone Go binary for running AI agents from the command line. No database, no web UI, no Docker — just a binary, a YAML config, and an API key.
 
-> **Status**: Phase 1 complete + Phase 4 skill registry. 84 files, ~11K lines, 111 tests, 26 commits.
+> **Status**: Phase 1 complete + WASM sandbox system. 100+ files, ~15K lines, 130+ tests.
 
 ---
 
@@ -10,7 +10,7 @@ A standalone Go binary for running AI agents from the command line. No database,
 
 ```bash
 # Build
-make build
+go build -o bin/agent-core ./cmd/agent-core/
 
 # Run a one-shot mission
 export OPENAI_API_KEY=sk-...
@@ -19,9 +19,6 @@ export OPENAI_API_KEY=sk-...
 
 # Interactive multi-turn chat
 ./bin/agent-core chat -c examples/dev-agent.yaml
-
-# Pipe input
-echo "Summarize this directory" | ./bin/agent-core run -c examples/dev-agent.yaml
 
 # List tools configured for an agent
 ./bin/agent-core tools -c examples/dev-agent.yaml
@@ -38,7 +35,7 @@ echo "Summarize this directory" | ./bin/agent-core run -c examples/dev-agent.yam
 
 1. Takes a YAML config (persona, model, skills, tools) and a mission
 2. Calls an LLM (Anthropic, OpenAI, Ollama, or any OpenAI-compatible endpoint)
-3. Executes tool calls (file ops, shell, HTTP, skill tools, MCP servers)
+3. Executes tool calls (file ops, shell, HTTP, WASM skill tools, MCP servers)
 4. Manages context (compaction when the window fills up)
 5. Streams results to the terminal in real-time
 6. Detects stuck loops, scrubs credentials, and enforces safety limits
@@ -66,10 +63,10 @@ All providers support:
 Wraps any provider with production-grade reliability:
 - **3-level failover**: retry same → rotate API key → fall back to alternate model
 - **Exponential backoff** with jitter
-- **API key rotation** on 429 (applies rotated key to all providers in chain)
+- **API key rotation** on 429
 - Configurable attempts per level
 
-### Core Tools (8 built-in)
+### Core Tools (9 built-in)
 
 | Tool | Description | Default |
 |---|---|---|
@@ -81,24 +78,104 @@ Wraps any provider with production-grade reliability:
 | `grep` | Regex search with context lines | On |
 | `http_fetch` | HTTP GET/POST requests | On |
 | `tasks` | Session-scoped task checklist | On |
+| `agent_spawn` | Spawn parallel sub-agents | On |
 
-### Tool Sandboxing
+### Sandbox System
 
-- **AllowedPaths / DeniedPaths**: restrict file system access (deny overrides allow)
+agent-core supports three sandboxing runtimes for executing skill tools:
+
+| Runtime | Backend | Isolation | Dependencies | Best For |
+|---|---|---|---|---|
+| **WASM** | Wazero (pure Go) | Capability-based | None | Skill tools, file ops |
+| **Container** | Docker / Podman | Full OS-level | Docker daemon | Untrusted code, heavy tasks |
+| **Subprocess** | Raw OS process | Minimal | Language runtime | Legacy/dev |
+
+#### WASM Sandbox (Default for Skills)
+
+All community skill tools are compiled to WebAssembly and run inside Wazero:
+
+- **Zero dependencies** — no Python, no pip, no npm, no shell scripts
+- **Capability-based security** — tools can only access explicitly granted resources:
+  - **AllowedPaths** / **ReadOnlyPaths** — filesystem access
+  - **AllowedHosts** — network access (HTTP through host functions)
+  - **EnvVars** — environment variable passthrough
+- **Host functions** — the `agent_host` module provides HTTP to WASM tools, gated by AllowedHosts
+- **~500ms per invocation** (includes compile; cacheable for repeat calls)
+- **Portable** — .wasm binaries run on any OS where agent-core runs
+
+```yaml
+# Agent YAML sandbox config
+sandbox:
+  mode: wasm
+  allowed_hosts:
+    - html.duckduckgo.com
+    - api.github.com
+  allowed_paths:
+    - /home/user/project
+  read_only_paths:
+    - /etc
+  max_timeout_sec: 30
+```
+
+#### Container Sandbox
+
+For full isolation, tools can run in Docker/Podman containers:
+
+- Read-only root filesystem
+- Memory + CPU limits
+- Network disabled by default (opt-in per AllowedHosts)
+- `--security-opt=no-new-privileges`
+- Auto-detects Docker or Podman
+
+#### Built-in Tool Sandboxing
+
+Core tools also support path-based sandboxing:
+
+- **AllowedPaths / DeniedPaths**: restrict file system access
 - **Environment filtering**: only PATH, HOME, TMPDIR passed to subprocesses
 - **Output truncation**: configurable max output size
 - **Timeouts**: per-tool execution limits
 
 ### Skill System
 
-Skills extend agents with domain-specific capabilities:
+Skills extend agents with domain-specific capabilities — instructions and/or WASM-sandboxed tools.
 
-- **SKILL.md format**: YAML frontmatter (metadata) + markdown body (injected into system prompt)
-- **Subprocess tools**: communicate via stdin/stdout JSON, language-agnostic
-- **Eligibility checks**: verify required binaries/env vars before loading
-- **Remote registries**: install from any GitHub repo with `registry.json`
-- **Auto-install**: missing skills automatically fetched from `skill_sources` on agent run
-- **Per-agent config**: human controls `config`, LLM controls `arguments`
+#### Skill Types
+
+| Type | Has Tools | Runtime | Example |
+|---|---|---|---|
+| **Tool skill** | Yes (.wasm) | WASM sandbox | web_search, github, slack_notify |
+| **Instruction-only** | No | None | summarize, code_review, write_doc |
+
+#### How It Works
+
+1. Skills are declared in the agent YAML: `skills: [web_search, summarize]`
+2. If not installed locally, auto-fetched from `skill_sources` (git registries)
+3. SKILL.md frontmatter parsed for metadata, body injected into system prompt
+4. Tool schemas loaded from `tools/*.json`, executables from `tools/*.wasm`
+5. Tools registered in the engine, dispatched through the sandbox runtime
+
+#### SKILL.md Format
+
+```yaml
+---
+name: web_search
+version: 2.0.0
+description: "Search the web via DuckDuckGo"
+author: platform-team
+tags: [web, search]
+emoji: "🔍"
+runtime: wasm          # wasm | container | subprocess
+config:
+  max_results:
+    type: integer
+    default: 10
+---
+
+# Instructions (injected into system prompt)
+
+Search the web and return titles, URLs, and snippets...
+```
 
 #### Skill CLI
 
@@ -106,17 +183,16 @@ Skills extend agents with domain-specific capabilities:
 # Browse available skills from registries
 agent-core skill search
 
-# Install from default registry (bitop-dev/agent-platform-skills)
+# Install from default registry
 agent-core skill install web_search
-agent-core skill install github
 
 # Install from a custom source
 agent-core skill install my_skill --source github.com/yourname/your-skills
 
 # Manage installed skills
-agent-core skill list          # show installed skills
-agent-core skill show web_search  # full details
-agent-core skill update web_search  # pull latest
+agent-core skill list
+agent-core skill show web_search
+agent-core skill update web_search
 agent-core skill remove web_search
 
 # Validate a skill directory
@@ -129,54 +205,22 @@ Model Context Protocol for external tool servers:
 - **stdio transport**: spawn server as subprocess
 - **HTTP/SSE transport**: connect to running server with auth headers
 - **Protocol**: initialize → list_tools → call_tool
-- **Adapter**: converts MCP tools to agent-core Tool interface
 
 ### Context Management
 
 - **Proactive compaction**: triggers when history exceeds 80% of context window
 - **Reactive compaction**: triggers on ContextFull error from provider
 - **LLM-summarize**: preserves last 20 messages, summarizes middle section
-- **Tool boundary guard**: never splits history mid tool-call/result sequence
 
 ### Safety Features
 
 | Feature | Description |
 |---|---|
-| **Loop detection** | 3 strategies: no-progress, ping-pong, failure streak. Two-phase: warn → hard stop |
-| **Credential scrubbing** | Regex-based, applied before entering conversation history |
-| **Approval manager** | Full autonomy (default) or supervised mode with CLI prompts |
-| **Safety heartbeat** | Re-injects safety constraints every N turns |
-| **Deferred-action detection** | Catches unfulfilled promises ("I'll do that next") |
-
-### Session Persistence
-
-- **JSONL format** at `~/.agent-core/sessions/{id}.jsonl`
-- Save/load/list/delete sessions
-- Resume multi-turn conversations with `--session`
-
-### Output Formats
-
-- **Text** (default): streaming terminal output with color
-- **JSON**: structured output for piping
-- **JSONL**: newline-delimited events for streaming consumers
-
----
-
-## CLI Commands
-
-```
-agent-core [command] [flags]
-
-Commands:
-  run          Run an agent with a mission (non-interactive)
-  chat         Interactive multi-turn chat (readline REPL, slash commands)
-  tools        List tools configured for an agent
-  skill        Skill management (list, show, install, remove, update, search, test)
-  mcp          MCP server test command
-  sessions     Session management (list, show, clear)
-  validate     Validate agent config file
-  version      Show version info
-```
+| **Loop detection** | 3 strategies: no-progress, ping-pong, failure streak |
+| **Credential scrubbing** | Regex-based, applied before entering history |
+| **Approval manager** | Full autonomy (default) or supervised mode |
+| **Safety heartbeat** | Re-injects constraints every N turns |
+| **Deferred-action detection** | Catches unfulfilled promises |
 
 ---
 
@@ -184,118 +228,87 @@ Commands:
 
 ```yaml
 name: research-agent
-description: "Researches topics and produces summaries"
-
-provider: openai
 model: gpt-4o
 
 system_prompt: |
-  You are a research assistant. When given a topic, search the web,
-  read relevant sources, and produce a clear, cited summary.
+  You are a research assistant.
 
-# Skill sources — any GitHub repo with registry.json
-skill_sources:
-  - github.com/bitop-dev/agent-platform-skills  # default (auto-used if omitted)
-  - github.com/mycorp/internal-skills            # custom private skills
-
-# Skills to load (auto-installed from sources if not found locally)
 skills:
-  - web_search:
-      backend: ddg
-      max_results: 10
+  - web_search
   - web_fetch
   - summarize
+
+sandbox:
+  mode: wasm
+  allowed_hosts:
+    - html.duckduckgo.com
+    - "*"
 
 tools:
   core:
     read_file: {}
     list_dir: {}
     grep: {}
-    http_fetch: {}
-    # bash: not listed = disabled for this agent
+    # bash: not listed = disabled
 
 max_turns: 20
 timeout_seconds: 300
-
-# Optional MCP servers
-mcp:
-  servers:
-    - name: postgres
-      transport: stdio
-      command: ["uvx", "mcp-server-postgres", "postgresql://localhost/mydb"]
 ```
-
-Example configs in [`examples/`](examples/): dev-agent, research-agent, standup-bot, mcp-agent, ollama-agent, sandboxed-agent.
 
 ---
 
 ## Project Structure
 
 ```
-cmd/agent-core/         CLI entrypoint (cobra commands)
+cmd/agent-core/          CLI entrypoint (cobra commands)
 internal/
-  agent/                Turn loop, events, context management
-    agent.go            Agent struct, Run() entry point
-    loop.go             Main turn loop
-    compact.go          Context compaction
-    detection.go        Loop detection (3 strategies)
-    scrub.go            Credential scrubbing
-    approval.go         Approval manager
-    heartbeat.go        Safety heartbeat
-    deferred.go         Deferred-action detection
-  provider/             LLM provider interface + implementations
-    openai.go           OpenAI Chat Completions (SSE streaming)
-    anthropic.go        Anthropic Messages (SSE streaming)
-    openai_responses.go OpenAI Responses API
-    reliable.go         ReliableProvider (retry/backoff/failover)
-    errors.go           Error classification (4 classes)
-  tool/                 Tool interface, engine, subprocess runner
-    tool.go             Tool interface + ToolEngine
-    engine.go           Parallel dispatch
-    subprocess.go       Subprocess runner (stdin/stdout JSON)
-    sandbox.go          Path/env sandboxing
-    builtin/            8 core tool implementations
-  skill/                Skill loader + remote registry
-    skill.go            Skill types
-    loader.go           ParseSkillMD, LoadAll, CheckEligibility
-    remote.go           FetchRegistry, InstallSkill, RemoveSkill, UpdateSkill
-  config/               YAML config parsing + validation
-  models/               Model catalog (12 models, context windows, pricing)
-  observer/             Telemetry interface (Noop, Log, Cost, Multi)
-  session/              JSONL session persistence
-  output/               Terminal renderers (text, JSON, JSONL)
-  mcp/                  MCP client (stdio + HTTP transports)
-pkg/agent/              Public API for embedding
-  agent.go              Builder pattern, QuickRun, provider factories
-examples/               Example YAML configs
+  agent/                 Turn loop, events, context management
+  provider/              LLM providers (OpenAI, Anthropic, Reliable)
+  tool/                  Tool interface, engine, subprocess, sandboxed tool
+    builtin/             9 core tool implementations
+  sandbox/               WASM, container, subprocess runtimes
+    testdata/tools/      WASM tool source code (Go → .wasm)
+    testdata/hostcall/   Go bindings for WASM host functions
+  skill/                 Skill loader + remote registry
+  config/                YAML config parsing + validation
+  mcp/                   MCP client (stdio + HTTP transports)
+  models/                Model catalog
+  observer/              Telemetry interface
+  session/               JSONL session persistence
+  output/                Terminal renderers (text, JSON, JSONL)
+pkg/agent/               Public API for embedding
 ```
 
 ---
 
 ## Public API (`pkg/agent`)
 
-For embedding agent-core in other Go programs (e.g., platform-api):
+For embedding agent-core in other Go programs:
 
 ```go
 import "github.com/bitop-dev/agent-core/pkg/agent"
 
-// Quick one-shot run
-result, err := agent.QuickRun(ctx, agent.QuickRunOptions{
-    Model:        "gpt-4o",
-    APIKey:       os.Getenv("OPENAI_API_KEY"),
-    SystemPrompt: "You are a helpful assistant.",
-    Mission:      "What is 2+2?",
-})
+// Quick one-shot
+result, err := agent.QuickRun(ctx, provider, "gpt-4o", "What is 2+2?")
 
-// Full builder pattern
-a := agent.NewBuilder().
-    WithModel("claude-sonnet-4-20250514").
-    WithAPIKey(key).
-    WithSystemPrompt(prompt).
-    WithTools(agent.NewToolEngine(nil)).
+// Full builder
+a, _ := agent.NewBuilder().
+    WithConfig(cfg).
+    WithProvider(provider).
+    WithTools(agent.NewToolEngine()).
     Build()
 
-result, err := a.Run(ctx, "Analyze this codebase")
+events, _ := a.Run(ctx, "Analyze this codebase")
+
+// Sandboxed skill registration
+reg := agent.NewSandboxRegistry()
+wasmRT, _ := agent.NewWASMRuntime(ctx)
+reg.Register(wasmRT)
+
+caps := agent.SandboxCapabilities{
+    AllowedHosts: []string{"html.duckduckgo.com"},
+}
+skills := agent.RegisterSkillToolsSandboxed(engine, reg, []string{"web_search"}, "wasm", caps)
 ```
 
 ---
@@ -303,12 +316,13 @@ result, err := a.Run(ctx, "Analyze this codebase")
 ## Testing
 
 ```bash
-make test        # Run all 111 tests
-make test-race   # With race detector
-make lint        # golangci-lint
-```
+go test ./... -count=1       # All 130+ tests
+go test ./... -race           # With race detector
 
-Tests cover: providers (error classification, reliable provider), agent (compaction, loop detection, scrubbing, approval, heartbeat, deferred), tools (sandbox), skills (loader, eligibility), MCP (protocol), output (renderers), pkg/agent (public API).
+# Sandbox-specific tests
+go test ./internal/sandbox/... -v     # WASM, filesystem, HTTP host functions
+go test ./internal/sandbox/e2e/ -v    # Full skill E2E (load → register → execute)
+```
 
 ---
 
@@ -316,10 +330,10 @@ Tests cover: providers (error classification, reliable provider), agent (compact
 
 | Repo | Purpose | Status |
 |---|---|---|
-| **agent-core** (this repo) | Standalone CLI + Go library | ✅ 111 tests, 26 commits |
-| [agent-platform-api](https://github.com/bitop-dev/agent-platform-api) | Go Fiber REST API | ✅ 22 tests, 11 commits |
-| [agent-platform-web](https://github.com/bitop-dev/agent-platform-web) | Bun + Vite + React web portal | ✅ 11 pages, 6 commits |
-| [agent-platform-skills](https://github.com/bitop-dev/agent-platform-skills) | Community skill registry | ✅ 5 skills, 2 commits |
+| **agent-core** (this repo) | Standalone CLI + Go library | ✅ 130+ tests |
+| [agent-platform-api](https://github.com/bitop-dev/agent-platform-api) | Go Fiber REST API | ✅ 22 tests |
+| [agent-platform-web](https://github.com/bitop-dev/agent-platform-web) | React web portal | ✅ 13 pages |
+| [agent-platform-skills](https://github.com/bitop-dev/agent-platform-skills) | Community skill registry | ✅ 10 skills (4 WASM + 6 instruction) |
 | [agent-platform-docs](https://github.com/bitop-dev/agent-platform-docs) | Architecture & planning | ✅ Comprehensive |
 
 ---
