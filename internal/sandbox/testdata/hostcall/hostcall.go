@@ -1,0 +1,81 @@
+// Package hostcall provides Go bindings for agent_host WASM host functions.
+// This package is imported by WASM tool modules compiled with GOOS=wasip1.
+//
+// It provides HTTP access through the host, gated by the sandbox's AllowedHosts.
+package hostcall
+
+import "unsafe"
+
+// httpRequest is the raw host function import.
+//
+//go:wasmimport agent_host http_request
+func httpRequest(
+	methodPtr, methodLen uint32,
+	urlPtr, urlLen uint32,
+	bodyPtr, bodyLen uint32,
+	respBufPtr, respBufLen uint32,
+) int32
+
+// responseBuf is a pre-allocated buffer for HTTP responses.
+// 2MB should handle most API responses.
+var responseBuf [2 * 1024 * 1024]byte
+
+// HTTPGet makes a GET request through the host's HTTP client.
+// Returns the response body or an error.
+// The host enforces AllowedHosts — requests to non-allowed hosts return an error.
+func HTTPGet(url string) ([]byte, error) {
+	return HTTPRequest("GET", url, nil)
+}
+
+// HTTPPost makes a POST request through the host's HTTP client.
+func HTTPPost(url string, body []byte) ([]byte, error) {
+	return HTTPRequest("POST", url, body)
+}
+
+// HTTPRequest makes an HTTP request through the host.
+func HTTPRequest(method, url string, body []byte) ([]byte, error) {
+	methodBytes := []byte(method)
+	urlBytes := []byte(url)
+
+	var bodyPtr uint32
+	var bodyLen uint32
+	if len(body) > 0 {
+		bodyPtr = uint32(uintptr(unsafe.Pointer(&body[0])))
+		bodyLen = uint32(len(body))
+	}
+
+	n := httpRequest(
+		uint32(uintptr(unsafe.Pointer(&methodBytes[0]))), uint32(len(methodBytes)),
+		uint32(uintptr(unsafe.Pointer(&urlBytes[0]))), uint32(len(urlBytes)),
+		bodyPtr, bodyLen,
+		uint32(uintptr(unsafe.Pointer(&responseBuf[0]))), uint32(len(responseBuf)),
+	)
+
+	if n == -1 {
+		return nil, &HostError{Code: -1, Message: "host function failed"}
+	}
+	if n == -2 {
+		return nil, &HostError{Code: -2, Message: "response exceeds buffer size"}
+	}
+	if n == -3 {
+		return nil, &HostError{Code: -3, Message: "host not allowed by sandbox policy"}
+	}
+	if n < 0 {
+		return nil, &HostError{Code: int(n), Message: "unknown host error"}
+	}
+
+	// Copy the response out of the shared buffer
+	result := make([]byte, n)
+	copy(result, responseBuf[:n])
+	return result, nil
+}
+
+// HostError is returned when a host function call fails.
+type HostError struct {
+	Code    int
+	Message string
+}
+
+func (e *HostError) Error() string {
+	return e.Message
+}

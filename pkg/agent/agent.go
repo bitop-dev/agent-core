@@ -18,6 +18,7 @@ import (
 	"github.com/bitop-dev/agent-core/internal/config"
 	"github.com/bitop-dev/agent-core/internal/observer"
 	"github.com/bitop-dev/agent-core/internal/provider"
+	"github.com/bitop-dev/agent-core/internal/sandbox"
 	"github.com/bitop-dev/agent-core/internal/skill"
 	"github.com/bitop-dev/agent-core/internal/tool"
 	"github.com/bitop-dev/agent-core/internal/tool/builtin"
@@ -241,9 +242,47 @@ func InstallSkill(source, name, destDir string) error {
 	return skill.InstallSkill(source, name, destDir)
 }
 
+// SandboxRegistry is the runtime registry for tool sandboxing.
+type SandboxRegistry = sandbox.Registry
+
+// SandboxCapabilities defines what a sandboxed tool can access.
+type SandboxCapabilities = sandbox.Capabilities
+
+// SandboxRuntimeType identifies a sandbox backend.
+type SandboxRuntimeType = sandbox.RuntimeType
+
+// Sandbox runtime type constants.
+const (
+	RuntimeNative     = sandbox.RuntimeNative
+	RuntimeWASM       = sandbox.RuntimeWASM
+	RuntimeContainer  = sandbox.RuntimeContainer
+	RuntimeSubprocess = sandbox.RuntimeSubprocess
+)
+
+// NewSandboxRegistry creates an empty sandbox runtime registry.
+func NewSandboxRegistry() *SandboxRegistry {
+	return sandbox.NewRegistry()
+}
+
+// NewWASMRuntime creates a Wazero-backed WASM runtime.
+func NewWASMRuntime(ctx context.Context) (*sandbox.WASMRuntime, error) {
+	return sandbox.NewWASMRuntime(ctx)
+}
+
+// NewContainerRuntime creates a Docker/Podman-backed container runtime.
+func NewContainerRuntime() (*sandbox.ContainerRuntime, error) {
+	return sandbox.NewContainerRuntime()
+}
+
+// NewSubprocessRuntime creates a legacy subprocess runtime.
+func NewSubprocessRuntime() *sandbox.SubprocessRuntime {
+	return sandbox.NewSubprocessRuntime()
+}
+
 // RegisterSkillTools finds and registers subprocess tools from locally installed skills.
 // It looks in dirs for skill directories matching the given names, finds tool executables,
 // and registers them in the engine. Returns the loaded skills for system prompt injection.
+// This is the legacy path — use RegisterSkillToolsSandboxed for sandbox support.
 func RegisterSkillTools(engine *ToolEngine, names []string, dirs ...string) []*Skill {
 	if len(names) == 0 {
 		return nil
@@ -257,7 +296,7 @@ func RegisterSkillTools(engine *ToolEngine, names []string, dirs ...string) []*S
 
 	for _, sk := range loaded {
 		for _, td := range sk.Tools {
-			execPath := findToolExec(sk.Dir, td.Name)
+			execPath, _ := skill.FindToolExec(sk.Dir, td.Name)
 			if execPath == "" {
 				continue
 			}
@@ -277,16 +316,93 @@ func RegisterSkillTools(engine *ToolEngine, names []string, dirs ...string) []*S
 	return loaded
 }
 
-// findToolExec locates an executable for a tool in a skill's tools/ directory.
-func findToolExec(skillDir, toolName string) string {
-	toolsDir := filepath.Join(skillDir, "tools")
-	for _, ext := range []string{".py", ".sh", ""} {
-		p := filepath.Join(toolsDir, toolName+ext)
-		if info, err := os.Stat(p); err == nil && !info.IsDir() {
-			return p
+// RegisterSkillToolsSandboxed finds and registers skill tools using the sandbox system.
+// Tools are dispatched through the appropriate runtime (WASM, container, or subprocess)
+// based on the skill's runtime declaration or the default mode.
+//
+// Parameters:
+//   - engine: the tool engine to register tools in
+//   - reg: the sandbox runtime registry
+//   - names: skill names to load
+//   - defaultMode: fallback runtime when skill doesn't declare one ("wasm", "container", "subprocess")
+//   - caps: default capabilities for tool execution
+//   - dirs: skill directories to search (default: ~/.agent-core/skills/)
+func RegisterSkillToolsSandboxed(
+	engine *ToolEngine,
+	reg *SandboxRegistry,
+	names []string,
+	defaultMode string,
+	caps SandboxCapabilities,
+	dirs ...string,
+) []*Skill {
+	if len(names) == 0 {
+		return nil
+	}
+	if len(dirs) == 0 {
+		dirs = []string{DefaultSkillDir()}
+	}
+
+	loader := skill.NewLoader(dirs...)
+	loaded, _ := loader.LoadByName(names)
+
+	for _, sk := range loaded {
+		for _, td := range sk.Tools {
+			execPath, execType := skill.FindToolExec(sk.Dir, td.Name)
+			if execPath == "" {
+				continue
+			}
+
+			// Determine runtime: skill declaration > exec type > default mode
+			rt := resolveRuntime(sk.Runtime, execType, defaultMode)
+
+			st := tool.NewSandboxedTool(tool.SandboxedToolConfig{
+				Def: tool.Definition{
+					Name:        td.Name,
+					Description: td.Description,
+					InputSchema: json.RawMessage(td.Parameters),
+				},
+				Runtime:  rt,
+				Module:   execPath,
+				WorkDir:  ".",
+				Caps:     caps,
+				Registry: reg,
+			})
+			engine.Register(st)
 		}
 	}
-	return ""
+
+	return loaded
+}
+
+// resolveRuntime picks the sandbox runtime for a tool.
+// Priority: skill-level declaration > exec type detection > agent default mode.
+func resolveRuntime(skillRuntime, execType, defaultMode string) sandbox.RuntimeType {
+	// Skill explicitly declares runtime
+	switch skillRuntime {
+	case "wasm":
+		return sandbox.RuntimeWASM
+	case "container":
+		return sandbox.RuntimeContainer
+	case "subprocess":
+		return sandbox.RuntimeSubprocess
+	}
+
+	// Auto-detect from executable type
+	switch execType {
+	case "wasm":
+		return sandbox.RuntimeWASM
+	}
+
+	// Fall back to agent default
+	switch defaultMode {
+	case "wasm":
+		return sandbox.RuntimeWASM
+	case "container":
+		return sandbox.RuntimeContainer
+	}
+
+	// Ultimate fallback
+	return sandbox.RuntimeSubprocess
 }
 
 // ─── Quick run ───────────────────────────────────────────────────────────────

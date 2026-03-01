@@ -52,6 +52,11 @@ func (l *Loader) Load(dir string) (*Skill, error) {
 		}
 	}
 
+	// Auto-detect runtime if not explicitly set
+	if skill.Runtime == "" {
+		skill.Runtime = DetectRuntime(dir)
+	}
+
 	return skill, nil
 }
 
@@ -214,6 +219,8 @@ type ToolDef struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	Parameters  json.RawMessage `json:"parameters"`
+	ExecPath    string          `json:"-"` // resolved path to executable (.wasm, .py, .sh, binary)
+	ExecType    string          `json:"-"` // "wasm", "script", "binary" — auto-detected from extension
 }
 
 // LoadToolDef reads a tool definition from a JSON file.
@@ -227,6 +234,78 @@ func LoadToolDef(path string) (*ToolDef, error) {
 		return nil, err
 	}
 	return &td, nil
+}
+
+// DetectRuntime auto-detects the runtime for a skill directory by scanning
+// its tools/ directory for executables.
+// Returns "wasm" if .wasm files found, "container" if Dockerfile/image found,
+// "subprocess" if scripts found, "" if no tools (instruction-only skill).
+func DetectRuntime(dir string) string {
+	toolsDir := filepath.Join(dir, "tools")
+	entries, err := os.ReadDir(toolsDir)
+	if err != nil {
+		return "" // no tools directory — instruction-only skill
+	}
+
+	hasWasm := false
+	hasScript := false
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		switch {
+		case strings.HasSuffix(name, ".wasm"):
+			hasWasm = true
+		case strings.HasSuffix(name, ".py"),
+			strings.HasSuffix(name, ".sh"),
+			strings.HasSuffix(name, ".js"),
+			strings.HasSuffix(name, ".ts"):
+			hasScript = true
+		}
+	}
+
+	// Check for Dockerfile
+	if _, err := os.Stat(filepath.Join(dir, "Dockerfile")); err == nil {
+		return "container"
+	}
+
+	if hasWasm {
+		return "wasm"
+	}
+	if hasScript {
+		return "subprocess"
+	}
+	return "" // instruction-only
+}
+
+// FindToolExec locates the executable for a tool in a skill's tools/ directory.
+// It tries .wasm first, then .py, .sh, and bare name.
+// Returns the path and the exec type ("wasm", "script", or "binary").
+func FindToolExec(skillDir, toolName string) (path string, execType string) {
+	toolsDir := filepath.Join(skillDir, "tools")
+
+	// WASM first — preferred sandbox runtime
+	wasmPath := filepath.Join(toolsDir, toolName+".wasm")
+	if info, err := os.Stat(wasmPath); err == nil && !info.IsDir() {
+		return wasmPath, "wasm"
+	}
+
+	// Scripts
+	for _, ext := range []string{".py", ".sh", ".js"} {
+		p := filepath.Join(toolsDir, toolName+ext)
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			return p, "script"
+		}
+	}
+
+	// Bare binary
+	p := filepath.Join(toolsDir, toolName)
+	if info, err := os.Stat(p); err == nil && !info.IsDir() {
+		return p, "binary"
+	}
+
+	return "", ""
 }
 
 // BuildSystemPromptFragment produces the text to inject into the system prompt

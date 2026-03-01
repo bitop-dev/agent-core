@@ -16,6 +16,7 @@ type AgentConfig struct {
 	Skills         []SkillRef        `yaml:"skills"`
 	Tools          ToolsConfig       `yaml:"tools"`
 	MCP            MCPConfig         `yaml:"mcp"`
+	Sandbox        SandboxConfig     `yaml:"sandbox"`
 	MaxTurns       int               `yaml:"max_turns"`
 	TimeoutSeconds int               `yaml:"timeout_seconds"`
 	MaxTokensTotal int               `yaml:"max_tokens_total"`
@@ -24,6 +25,32 @@ type AgentConfig struct {
 	Heartbeat      HeartbeatConfig   `yaml:"heartbeat"`
 	Approval       ApprovalConfig    `yaml:"approval"`
 	Output         OutputConfig      `yaml:"output"`
+}
+
+// SandboxConfig controls how skill tools are executed.
+type SandboxConfig struct {
+	// Mode is the default sandbox runtime: "none", "wasm", "container".
+	// "none" runs tools as raw subprocesses (legacy/dev).
+	// "wasm" runs .wasm modules via Wazero (lightweight, capability-based).
+	// "container" runs tools in Docker/Podman containers (full isolation).
+	// Skills can override this per-skill via their own runtime field.
+	Mode string `yaml:"mode"`
+
+	// AllowedPaths is the list of host directories tools may access.
+	AllowedPaths []string `yaml:"allowed_paths"`
+
+	// ReadOnlyPaths is the list of host directories mounted read-only.
+	ReadOnlyPaths []string `yaml:"read_only_paths"`
+
+	// AllowedHosts is the list of network hosts tools may reach.
+	// Empty means no network. ["*"] means unrestricted.
+	AllowedHosts []string `yaml:"allowed_hosts"`
+
+	// MaxMemoryMB caps memory per tool execution. 0 = 256MB default.
+	MaxMemoryMB int `yaml:"max_memory_mb"`
+
+	// MaxTimeoutSec caps execution time per tool. 0 = 60s default.
+	MaxTimeoutSec int `yaml:"max_timeout_sec"`
 }
 
 // SkillRef is either a string (skill name) or a map (skill name → config).

@@ -10,6 +10,8 @@ type Skill struct {
 	Tags         []string
 	Emoji        string
 	Always       bool               // inject full instructions even in compact mode
+	Runtime      string             `yaml:"runtime"` // wasm | container | subprocess | "" (auto-detect)
+	Image        string             `yaml:"image"`   // container image ref (for runtime: container)
 	Requires     Requirements
 	Install      []InstallSpec
 	Config       map[string]ConfigOption
