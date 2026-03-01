@@ -16,9 +16,19 @@ type bashArgs struct {
 	Timeout int    `json:"timeout,omitempty"`
 }
 
-type bashTool struct{}
+type bashTool struct {
+	sandbox    *tool.SandboxPolicy
+	workingDir string
+}
 
+// NewBash creates the bash tool with default settings.
 func NewBash() tool.Tool { return &bashTool{} }
+
+// NewBashWithSandbox creates the bash tool with sandbox policy.
+// workingDir sets the subprocess working directory (empty = inherit).
+func NewBashWithSandbox(p *tool.SandboxPolicy, workingDir string) tool.Tool {
+	return &bashTool{sandbox: p, workingDir: workingDir}
+}
 
 func (t *bashTool) Definition() tool.Definition {
 	return tool.Definition{
@@ -52,7 +62,11 @@ func (t *bashTool) Execute(ctx context.Context, input json.RawMessage) (tool.Res
 
 	timeout := time.Duration(args.Timeout) * time.Second
 	if timeout <= 0 {
-		timeout = 60 * time.Second
+		if t.sandbox != nil {
+			timeout = time.Duration(t.sandbox.Timeout()) * time.Second
+		} else {
+			timeout = 60 * time.Second
+		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -61,6 +75,16 @@ func (t *bashTool) Execute(ctx context.Context, input json.RawMessage) (tool.Res
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+
+	// Apply sandbox: working directory and filtered environment
+	if t.workingDir != "" {
+		cmd.Dir = t.workingDir
+	}
+	if t.sandbox != nil {
+		if env := t.sandbox.FilteredEnv(); env != nil {
+			cmd.Env = env
+		}
+	}
 
 	err := cmd.Run()
 
