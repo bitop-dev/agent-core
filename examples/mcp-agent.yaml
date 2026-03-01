@@ -1,3 +1,14 @@
+# MCP agent — connects to external tool servers via Model Context Protocol.
+# Demonstrates both HTTP/SSE and stdio MCP transports.
+#
+# MCP lets you connect to external tool servers that expose tools via JSON-RPC.
+# The agent discovers available tools at startup and can call them like any other tool.
+#
+# Usage:
+#   export CONTEXT7_API_KEY=...
+#   agent-core run -c examples/mcp-agent.yaml \
+#     --mission "Look up the React useEffect documentation"
+
 name: docs-agent
 description: "Documentation assistant with MCP-powered context search"
 
@@ -20,12 +31,14 @@ tools:
 
 mcp:
   servers:
+    # HTTP/SSE transport — connect to a running MCP server
     - name: context7
       transport: http
       url: https://mcp.context7.com/mcp
       headers:
         CONTEXT7_API_KEY: ${CONTEXT7_API_KEY}
 
+    # stdio transport — spawns the MCP server as a child process
     - name: tanstack
       transport: stdio
       command: ["npx", "@tanstack/cli", "mcp"]

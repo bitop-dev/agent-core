@@ -1,24 +1,43 @@
+# Standup report bot — fetches GitHub activity and generates a daily summary.
+# Uses WASM-sandboxed GitHub and Slack skills.
+#
+# Usage:
+#   export GITHUB_TOKEN=ghp_...
+#   export SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
+#   agent-core run -c examples/standup-bot.yaml \
+#     --mission "Generate today's standup for bitop-dev/agent-core"
+
 name: standup-bot
-description: "Generates daily standup summaries from GitHub issues"
+description: "Generates daily standup summaries from GitHub and posts to Slack"
 
 provider: anthropic
 model: claude-sonnet-4-20250514
 
 system_prompt: |
   You are a standup report generator. When given a repo:
-  1. Fetch open issues and recent PRs
+  1. Fetch open issues and recent PRs using the GitHub tools
   2. Group them by: in-progress, blocked, recently closed
-  3. Produce a concise standup summary
-  
-  Format the output as a clean markdown document with sections.
+  3. Produce a concise standup summary in markdown
+  4. If a Slack webhook is configured, post the summary to Slack
 
 default_mission: |
   Generate today's standup summary for the team.
 
 skills:
   - github
+  - slack_notify
   - summarize
   - report
+
+sandbox:
+  mode: wasm
+  allowed_hosts:
+    - api.github.com
+    - hooks.slack.com
+  env_vars:
+    GITHUB_TOKEN: ${GITHUB_TOKEN}
+    SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
+  max_timeout_sec: 30
 
 tools:
   core:

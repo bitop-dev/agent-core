@@ -1,0 +1,50 @@
+# Orchestrator agent — uses agent_spawn to delegate work to parallel sub-agents.
+# The parent agent receives a complex mission, breaks it into sub-tasks,
+# and spawns child agents to handle each one concurrently.
+#
+# Usage:
+#   agent-core run -c examples/orchestrator-agent.yaml \
+#     --mission "Compare React, Vue, and Svelte: performance, ecosystem, and learning curve"
+
+name: orchestrator
+description: "Orchestrates parallel sub-agents for divide-and-conquer research"
+
+provider: anthropic
+model: claude-sonnet-4-20250514
+
+system_prompt: |
+  You are a research coordinator. When given a complex topic:
+  1. Break it into 2-4 independent sub-tasks
+  2. Use agent_spawn to delegate each sub-task to a parallel sub-agent
+  3. Collect the results and synthesize a comprehensive answer
+  
+  Each sub-agent gets its own context and tool budget. Use agent_spawn
+  with a clear mission for each one. Sub-agents have web_search and
+  web_fetch skills available.
+
+skills:
+  - web_search
+  - web_fetch
+  - summarize
+
+sandbox:
+  mode: wasm
+  allowed_hosts:
+    - html.duckduckgo.com
+    - "*"
+  max_timeout_sec: 30
+
+tools:
+  core:
+    agent_spawn: {}            # the orchestration tool
+    read_file: {}
+    write_file: {}
+    # no bash — orchestrator doesn't need shell
+
+max_turns: 20
+timeout_seconds: 600
+
+output:
+  stream: true
+  format: text
+  color: auto

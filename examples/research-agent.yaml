@@ -1,5 +1,12 @@
+# Research agent with WASM-sandboxed web search and fetch.
+# Skills run as WebAssembly modules — zero dependencies required.
+#
+# Usage:
+#   agent-core run -c examples/research-agent.yaml \
+#     --mission "What are the major changes in Go 1.24?"
+
 name: research-agent
-description: "Researches topics and produces cited summaries"
+description: "Researches topics using WASM-sandboxed web tools and produces cited summaries"
 
 provider: anthropic
 model: claude-sonnet-4-20250514
@@ -10,14 +17,19 @@ system_prompt: |
   2. Read the most promising sources
   3. Produce a clear, well-organized summary with citations
   
-  Always cite your sources. If you're unsure about something, say so.
+  Always cite your sources with URLs. If you're unsure about something, say so.
 
 skills:
-  - web_search:
-      backend: ddg
-      max_results: 10
+  - web_search
   - web_fetch
   - summarize
+
+sandbox:
+  mode: wasm
+  allowed_hosts:
+    - html.duckduckgo.com
+    - "*"                    # web_fetch needs to reach any URL
+  max_timeout_sec: 30
 
 tools:
   core:
@@ -25,7 +37,7 @@ tools:
     list_dir: {}
     grep: {}
     http_fetch: {}
-    # bash not listed = disabled (read-only agent)
+    # bash not listed = disabled (read-only research agent)
 
 max_turns: 15
 timeout_seconds: 300

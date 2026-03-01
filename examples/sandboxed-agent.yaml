@@ -1,3 +1,12 @@
+# Locked-down agent restricted to a specific directory.
+# Demonstrates both native tool sandboxing (path restrictions) and
+# approval prompts for destructive operations.
+#
+# Usage:
+#   mkdir -p /tmp/sandbox
+#   agent-core run -c examples/sandboxed-agent.yaml \
+#     --mission "Create a simple Go hello world program in this directory"
+
 name: sandboxed-agent
 description: "Agent restricted to a specific directory with approval prompts"
 
@@ -5,7 +14,7 @@ model: gpt-4o
 
 system_prompt: |
   You are a helpful coding assistant. You can only access files
-  within the project directory. Destructive operations require
+  within the /tmp/sandbox directory. Destructive operations require
   human approval.
 
 tools:

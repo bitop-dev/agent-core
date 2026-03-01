@@ -1,5 +1,20 @@
+# Local Ollama agent — runs entirely offline with no API keys.
+# Uses a local LLM via Ollama with native tools only.
+#
+# Prerequisites:
+#   1. Install Ollama: https://ollama.ai
+#   2. Start server: ollama serve
+#   3. Pull a model: ollama pull llama3.1
+#
+# Usage:
+#   agent-core run -c examples/ollama-agent.yaml \
+#     --mission "List the files in the current directory and summarize what this project does"
+#
+# Or interactive:
+#   agent-core chat -c examples/ollama-agent.yaml
+
 name: local-agent
-description: "Coding assistant using a local Ollama model"
+description: "Coding assistant using a local Ollama model — fully offline"
 
 provider: ollama
 model: llama3.1
@@ -23,8 +38,7 @@ max_turns: 20
 timeout_seconds: 300
 
 # No API key needed — Ollama runs locally
-# Start Ollama first: ollama serve
-# Pull a model: ollama pull llama3.1
+# No sandbox needed — native tools only
 
 output:
   stream: true

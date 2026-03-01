@@ -1,5 +1,13 @@
+# Full-featured development agent with shell access and GitHub integration.
+# GitHub skill runs in WASM sandbox — needs GITHUB_TOKEN env var for auth.
+#
+# Usage:
+#   export GITHUB_TOKEN=ghp_...
+#   agent-core run -c examples/dev-agent.yaml \
+#     --mission "Review the latest PRs and summarize open issues"
+
 name: dev-agent
-description: "Coding assistant with full shell and GitHub access"
+description: "Coding assistant with full shell and WASM-sandboxed GitHub access"
 
 provider: anthropic
 model: claude-sonnet-4-20250514
@@ -14,6 +22,15 @@ system_prompt: |
 
 skills:
   - github
+  - code_review
+
+sandbox:
+  mode: wasm
+  allowed_hosts:
+    - api.github.com
+  env_vars:
+    GITHUB_TOKEN: ${GITHUB_TOKEN}
+  max_timeout_sec: 30
 
 tools:
   core:
@@ -35,7 +52,7 @@ context:
 
 approval:
   policy: list
-  required_tools: []  # trust bash for dev agents
+  required_tools: []         # trust bash for dev agents
 
 output:
   stream: true

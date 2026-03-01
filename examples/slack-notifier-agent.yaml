@@ -1,0 +1,49 @@
+# Slack notifier agent — searches the web and posts findings to Slack.
+# The slack_notify skill is a WASM module that POSTs to a Slack webhook.
+#
+# Prerequisites:
+#   1. Create a Slack Incoming Webhook:
+#      https://api.slack.com/messaging/webhooks
+#   2. Set the webhook URL:
+#      export SLACK_WEBHOOK_URL=https://hooks.slack.com/services/T.../B.../xxx
+#
+# Usage:
+#   agent-core run -c examples/slack-notifier-agent.yaml \
+#     --mission "Find the latest Kubernetes release and post a summary to Slack"
+
+name: slack-notifier
+description: "Researches a topic and posts results to Slack"
+
+model: gpt-4o
+
+system_prompt: |
+  You are a research-and-notify bot. When given a topic:
+  1. Search the web for the latest information
+  2. Write a concise summary (3-5 bullet points)
+  3. Post the summary to Slack using the slack_notify tool
+  
+  Always include source URLs in your Slack message.
+
+skills:
+  - web_search
+  - slack_notify
+
+sandbox:
+  mode: wasm
+  allowed_hosts:
+    - html.duckduckgo.com
+    - hooks.slack.com
+  env_vars:
+    SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
+  max_timeout_sec: 30
+
+tools:
+  core:
+    http_fetch: {}
+
+max_turns: 10
+timeout_seconds: 120
+
+output:
+  stream: true
+  format: text

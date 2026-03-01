@@ -1,0 +1,16 @@
+# Minimal agent — fewest settings possible.
+# Just a model and a system prompt. No skills, no sandbox, no frills.
+#
+# Usage:
+#   export OPENAI_API_KEY=sk-...
+#   agent-core run -c examples/minimal-agent.yaml \
+#     --mission "Explain what a goroutine is in 3 sentences"
+
+name: minimal
+model: gpt-4o
+
+system_prompt: |
+  You are a helpful assistant. Answer questions clearly and concisely.
+
+max_turns: 5
+timeout_seconds: 60

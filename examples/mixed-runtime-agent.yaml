@@ -1,0 +1,49 @@
+# Mixed-runtime agent — demonstrates WASM and container tools in one agent.
+# web_search runs in WASM sandbox, text_transform runs in Docker container.
+# Shows that agent-core can dispatch to different runtimes per-tool.
+#
+# Prerequisites:
+#   - Docker running with agent-core-test-tool:latest built
+#   - web_search skill installed (agent-core skill install web_search)
+#   - text_transform skill installed (see container-agent.yaml)
+#
+# Usage:
+#   agent-core run -c examples/mixed-runtime-agent.yaml \
+#     --mission "Search for 'Go programming' and uppercase the first result title"
+
+name: mixed-runtime-agent
+description: "Agent using both WASM (web search) and Docker (text transform) skills"
+
+model: gpt-4o
+
+system_prompt: |
+  You are a research assistant with two special tools:
+  1. web_search — searches the web (runs in WASM sandbox)
+  2. text_transform — converts text to uppercase (runs in Docker container)
+  
+  When asked to search and transform, use both tools in sequence.
+
+skills:
+  - web_search
+  - text_transform
+
+sandbox:
+  mode: wasm                    # default for WASM skills
+  allowed_hosts:
+    - html.duckduckgo.com
+    - "*"
+  max_timeout_sec: 30
+  # Container skills auto-override to container runtime regardless of this setting
+
+tools:
+  core:
+    read_file: {}
+    list_dir: {}
+    http_fetch: {}
+
+max_turns: 5
+timeout_seconds: 120
+
+output:
+  stream: true
+  format: text

@@ -1,0 +1,52 @@
+# Agent using a Docker container-based skill tool.
+# Container skills run inside ephemeral Docker containers with full OS isolation:
+#   --read-only --no-new-privileges --memory=256m --cpus=1 --network=none
+#
+# Prerequisites:
+#   1. Docker running
+#   2. Build the test tool image:
+#      docker build -t agent-core-test-tool:latest internal/sandbox/testdata/container_tool/
+#   3. Install the skill:
+#      mkdir -p ~/.agent-core/skills/text_transform/tools
+#      Copy SKILL.md and tools/text_transform.json (see below)
+#
+# Usage:
+#   agent-core run -c examples/container-agent.yaml \
+#     --mission "Transform 'hello world' to uppercase"
+#
+# The text_transform skill's SKILL.md:
+#   ---
+#   name: text_transform
+#   runtime: container
+#   image: agent-core-test-tool:latest
+#   ---
+#   # Text Transform
+#   Converts text to uppercase using a Docker container.
+
+name: container-test-agent
+description: "Agent using a Docker container skill for text transformation"
+
+model: gpt-4o
+
+system_prompt: |
+  You are a helpful assistant. You have a text_transform tool that converts
+  text to uppercase. When asked to transform text, use the text_transform tool.
+
+skills:
+  - text_transform
+
+sandbox:
+  mode: container
+  max_timeout_sec: 30
+
+tools:
+  core:
+    read_file: {}
+    list_dir: {}
+
+max_turns: 5
+timeout_seconds: 60
+
+output:
+  stream: true
+  format: text

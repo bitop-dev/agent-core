@@ -1,0 +1,52 @@
+# Native tools agent — uses only the 9 built-in tools, no skills.
+# Built-in tools are compiled into the binary and execute in-process.
+# No WASM, no Docker, no external dependencies.
+#
+# Usage:
+#   agent-core run -c examples/native-tools-agent.yaml \
+#     --mission "List all Go files in this directory, then show me the main function"
+#
+# Or interactive:
+#   agent-core chat -c examples/native-tools-agent.yaml
+
+name: native-tools-agent
+description: "Agent using all 9 built-in tools — no skills, no sandbox"
+
+model: gpt-4o
+
+system_prompt: |
+  You are a coding assistant with full access to the filesystem and shell.
+  You have 9 tools available:
+  - bash: run shell commands
+  - read_file: read files (supports offset/limit for large files)
+  - write_file: create or overwrite files
+  - edit_file: surgical find-and-replace edits
+  - list_dir: list directory contents with metadata
+  - grep: regex search across files
+  - http_fetch: make HTTP requests
+  - tasks: maintain a task checklist during the session
+  - agent_spawn: spawn sub-agents for parallel work
+  
+  Always read code before editing. Use edit_file for small changes.
+  Run tests after modifications.
+
+tools:
+  core:
+    bash:
+      timeout_seconds: 60
+    read_file: {}
+    write_file: {}
+    edit_file: {}
+    list_dir: {}
+    grep: {}
+    http_fetch: {}
+    tasks: {}
+    agent_spawn: {}
+
+max_turns: 30
+timeout_seconds: 600
+
+output:
+  stream: true
+  format: text
+  color: auto
