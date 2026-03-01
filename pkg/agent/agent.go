@@ -10,6 +10,9 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 
 	iagent "github.com/bitop-dev/agent-core/internal/agent"
 	"github.com/bitop-dev/agent-core/internal/config"
@@ -222,6 +225,68 @@ func BuildSkillPrompt(skills []*Skill) string {
 // ParseSkillMD parses a SKILL.md file into a Skill struct.
 func ParseSkillMD(data []byte) (*Skill, error) {
 	return skill.ParseSkillMD(data)
+}
+
+// DefaultSkillDir returns the default local skill installation directory (~/.agent-core/skills/).
+func DefaultSkillDir() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".agent-core", "skills")
+}
+
+// DefaultSkillSource is the default GitHub skill registry.
+const DefaultSkillSource = "github.com/bitop-dev/agent-platform-skills"
+
+// InstallSkill installs a skill from a registry source to a local directory.
+func InstallSkill(source, name, destDir string) error {
+	return skill.InstallSkill(source, name, destDir)
+}
+
+// RegisterSkillTools finds and registers subprocess tools from locally installed skills.
+// It looks in dirs for skill directories matching the given names, finds tool executables,
+// and registers them in the engine. Returns the loaded skills for system prompt injection.
+func RegisterSkillTools(engine *ToolEngine, names []string, dirs ...string) []*Skill {
+	if len(names) == 0 {
+		return nil
+	}
+	if len(dirs) == 0 {
+		dirs = []string{DefaultSkillDir()}
+	}
+
+	loader := skill.NewLoader(dirs...)
+	loaded, _ := loader.LoadByName(names)
+
+	for _, sk := range loaded {
+		for _, td := range sk.Tools {
+			execPath := findToolExec(sk.Dir, td.Name)
+			if execPath == "" {
+				continue
+			}
+			st := tool.NewSubprocessTool(tool.Definition{
+				Name:        td.Name,
+				Description: td.Description,
+				InputSchema: json.RawMessage(td.Parameters),
+			}, tool.SubprocessConfig{
+				Command:        execPath,
+				TimeoutSeconds: 30,
+				WorkDir:        ".",
+			})
+			engine.Register(st)
+		}
+	}
+
+	return loaded
+}
+
+// findToolExec locates an executable for a tool in a skill's tools/ directory.
+func findToolExec(skillDir, toolName string) string {
+	toolsDir := filepath.Join(skillDir, "tools")
+	for _, ext := range []string{".py", ".sh", ""} {
+		p := filepath.Join(toolsDir, toolName+ext)
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			return p
+		}
+	}
+	return ""
 }
 
 // ─── Quick run ───────────────────────────────────────────────────────────────
