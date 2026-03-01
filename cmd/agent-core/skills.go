@@ -23,11 +23,13 @@ func defaultSkillDirs() []string {
 
 // loadSkills loads skills referenced in the agent config.
 // Returns loaded skills and registers their tools in the engine.
+// If a skill isn't found locally, it tries to install from skill_sources.
 func loadSkills(cfg *config.AgentConfig, engine *tool.Engine) ([]*skill.Skill, error) {
 	if len(cfg.Skills) == 0 {
 		return nil, nil
 	}
 
+	destDir := defaultSkillDirs()[0]
 	loader := skill.NewLoader(defaultSkillDirs()...)
 
 	// Collect skill names from config
@@ -40,8 +42,50 @@ func loadSkills(cfg *config.AgentConfig, engine *tool.Engine) ([]*skill.Skill, e
 		}
 	}
 
-	// Load skills
+	// Load skills — first pass (local)
 	skills, warnings := loader.LoadByName(names)
+
+	// Find missing skills
+	loaded := make(map[string]bool)
+	for _, s := range skills {
+		loaded[s.Name] = true
+	}
+
+	var missing []string
+	for _, n := range names {
+		if !loaded[n] {
+			missing = append(missing, n)
+		}
+	}
+
+	// Auto-install missing skills from sources
+	if len(missing) > 0 {
+		sources := cfg.SkillSources
+		if len(sources) == 0 {
+			sources = []string{skill.DefaultSource}
+		}
+
+		for _, name := range missing {
+			installed := false
+			for _, src := range sources {
+				fmt.Fprintf(os.Stderr, "\033[36mInstalling skill %q from %s...\033[0m\n", name, src)
+				if err := skill.InstallSkill(src, name, destDir); err != nil {
+					continue // try next source
+				}
+				fmt.Fprintf(os.Stderr, "\033[32m✓ Installed %s\033[0m\n", name)
+				installed = true
+				break
+			}
+			if !installed {
+				warnings = append(warnings, fmt.Sprintf("skill %q not found in any source", name))
+			}
+		}
+
+		// Reload after installation
+		loader = skill.NewLoader(defaultSkillDirs()...)
+		skills, warnings = loader.LoadByName(names)
+	}
+
 	for _, w := range warnings {
 		fmt.Fprintf(os.Stderr, "\033[33mwarning: %s\033[0m\n", w)
 	}
@@ -104,6 +148,10 @@ func skillCmd() *cobra.Command {
 	cmd.AddCommand(skillListCmd())
 	cmd.AddCommand(skillShowCmd())
 	cmd.AddCommand(skillTestCmd())
+	cmd.AddCommand(skillInstallCmd())
+	cmd.AddCommand(skillRemoveCmd())
+	cmd.AddCommand(skillUpdateCmd())
+	cmd.AddCommand(skillSearchCmd())
 
 	return cmd
 }
@@ -183,6 +231,118 @@ func skillShowCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func skillInstallCmd() *cobra.Command {
+	var source string
+	cmd := &cobra.Command{
+		Use:   "install [skill-name]",
+		Short: "Install a skill from a registry",
+		Long:  "Install a skill from a skill source (GitHub repo with registry.json).\nDefault source: " + skill.DefaultSource,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			dest := defaultSkillDirs()[0]
+
+			fmt.Printf("Installing skill %q from %s...\n", name, source)
+			if err := skill.InstallSkill(source, name, dest); err != nil {
+				return fmt.Errorf("❌ %w", err)
+			}
+			fmt.Printf("✓ Installed %s to %s/%s\n", name, dest, name)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&source, "source", skill.DefaultSource, "Skill source (GitHub repo URL)")
+	return cmd
+}
+
+func skillRemoveCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "remove [skill-name]",
+		Short: "Remove an installed skill",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			dest := defaultSkillDirs()[0]
+
+			if err := skill.RemoveSkill(name, dest); err != nil {
+				return fmt.Errorf("❌ %w", err)
+			}
+			fmt.Printf("✓ Removed %s\n", name)
+			return nil
+		},
+	}
+}
+
+func skillUpdateCmd() *cobra.Command {
+	var source string
+	cmd := &cobra.Command{
+		Use:   "update [skill-name]",
+		Short: "Update an installed skill to the latest version",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			dest := defaultSkillDirs()[0]
+
+			fmt.Printf("Updating skill %q from %s...\n", name, source)
+			if err := skill.UpdateSkill(source, name, dest); err != nil {
+				return fmt.Errorf("❌ %w", err)
+			}
+			fmt.Printf("✓ Updated %s\n", name)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&source, "source", skill.DefaultSource, "Skill source (GitHub repo URL)")
+	return cmd
+}
+
+func skillSearchCmd() *cobra.Command {
+	var sources []string
+	cmd := &cobra.Command{
+		Use:   "search",
+		Short: "Search available skills from registries",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(sources) == 0 {
+				sources = []string{skill.DefaultSource}
+			}
+
+			items, err := skill.ListRegistrySkills(sources)
+			if err != nil {
+				return fmt.Errorf("❌ %w", err)
+			}
+
+			if len(items) == 0 {
+				fmt.Println("No skills found in registries.")
+				return nil
+			}
+
+			// Check which are already installed
+			installed := make(map[string]bool)
+			loader := skill.NewLoader(defaultSkillDirs()...)
+			localSkills, _ := loader.LoadAll()
+			for _, s := range localSkills {
+				installed[s.Name] = true
+			}
+
+			fmt.Printf("%-20s  %-8s  %-10s  %-10s  %s\n", "Name", "Version", "Tier", "Status", "Description")
+			fmt.Printf("%-20s  %-8s  %-10s  %-10s  %s\n", "---", "---", "---", "---", "---")
+			for _, item := range items {
+				status := "available"
+				if installed[item.Name] {
+					status = "installed"
+				}
+				desc := item.Description
+				if len(desc) > 50 {
+					desc = desc[:50] + "..."
+				}
+				fmt.Printf("%-20s  %-8s  %-10s  %-10s  %s\n",
+					item.Name, item.Version, item.Tier, status, desc)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringSliceVar(&sources, "source", nil, "Skill sources (can specify multiple)")
+	return cmd
 }
 
 func skillTestCmd() *cobra.Command {
