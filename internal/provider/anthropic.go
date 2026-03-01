@@ -62,9 +62,23 @@ func (p *anthropicProvider) Complete(ctx context.Context, req CompletionRequest)
 	httpReq.Header.Set("x-api-key", p.config.APIKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 
+	// Make the HTTP request synchronously to catch connection-level errors
+	// (non-200 status, network failures) before starting the stream.
+	// This lets ReliableProvider retry on transient failures.
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("http request: %w", err)
+	}
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
 	go func() {
 		defer close(ch)
-		p.stream(httpReq, ch)
+		defer resp.Body.Close()
+		p.streamFromReader(resp.Body, ch)
 	}()
 
 	return ch, nil
@@ -218,23 +232,7 @@ type anthMessageDelta struct {
 	} `json:"usage"`
 }
 
-func (p *anthropicProvider) stream(req *http.Request, ch chan<- CompletionEvent) {
-	resp, err := p.client.Do(req)
-	if err != nil {
-		ch <- CompletionEvent{Type: EventProviderError, Error: fmt.Errorf("http request: %w", err)}
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		ch <- CompletionEvent{
-			Type:  EventProviderError,
-			Error: fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body)),
-		}
-		return
-	}
-
+func (p *anthropicProvider) streamFromReader(body io.Reader, ch chan<- CompletionEvent) {
 	// Track active content blocks for tool call assembly
 	type blockState struct {
 		blockType string
@@ -245,7 +243,7 @@ func (p *anthropicProvider) stream(req *http.Request, ch chan<- CompletionEvent)
 	blocks := map[int]*blockState{}
 	var inputTokens int
 
-	scanner := bufio.NewScanner(resp.Body)
+	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 256*1024), 256*1024)
 
 	var currentEvent string

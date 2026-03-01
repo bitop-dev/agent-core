@@ -129,10 +129,14 @@ func runCmd() *cobra.Command {
 			engine := tool.NewEngine()
 			registerBuiltins(engine, cfg)
 
+			// Wrap provider with reliability layer
+			reliableCfg := provider.DefaultReliableConfig()
+			rp := provider.NewReliable(p, reliableCfg)
+
 			// Build agent
 			a, err := agent.NewBuilder().
 				WithConfig(cfg).
-				WithProvider(p).
+				WithProvider(rp).
 				WithTools(engine).
 				WithObserver(observer.Noop{}).
 				Build()

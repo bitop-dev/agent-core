@@ -57,9 +57,20 @@ func (p *openaiResponsesProvider) Complete(ctx context.Context, req CompletionRe
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+p.config.APIKey)
 
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("http request: %w", err)
+	}
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
 	go func() {
 		defer close(ch)
-		p.stream(httpReq, ch)
+		defer resp.Body.Close()
+		p.streamFromReader(resp.Body, ch)
 	}()
 
 	return ch, nil
@@ -190,23 +201,7 @@ type respStreamEvent struct {
 	Data json.RawMessage `json:"-"` // we'll unmarshal per-type
 }
 
-func (p *openaiResponsesProvider) stream(req *http.Request, ch chan<- CompletionEvent) {
-	resp, err := p.client.Do(req)
-	if err != nil {
-		ch <- CompletionEvent{Type: EventProviderError, Error: fmt.Errorf("http request: %w", err)}
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		ch <- CompletionEvent{
-			Type:  EventProviderError,
-			Error: fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body)),
-		}
-		return
-	}
-
+func (p *openaiResponsesProvider) streamFromReader(body io.Reader, ch chan<- CompletionEvent) {
 	// Track function calls being built across deltas
 	type fcState struct {
 		id   string
@@ -215,7 +210,7 @@ func (p *openaiResponsesProvider) stream(req *http.Request, ch chan<- Completion
 	}
 	funcCalls := map[int]*fcState{} // output_index → state
 
-	scanner := bufio.NewScanner(resp.Body)
+	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 512*1024), 512*1024)
 
 	for scanner.Scan() {

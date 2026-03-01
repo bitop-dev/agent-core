@@ -60,9 +60,20 @@ func (p *openaiProvider) Complete(ctx context.Context, req CompletionRequest) (<
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+p.config.APIKey)
 
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("http request: %w", err)
+	}
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
 	go func() {
 		defer close(ch)
-		p.stream(httpReq, ch)
+		defer resp.Body.Close()
+		p.streamFromReader(resp.Body, ch)
 	}()
 
 	return ch, nil
@@ -230,27 +241,11 @@ type oaiUsage struct {
 	CompletionTokens int `json:"completion_tokens"`
 }
 
-func (p *openaiProvider) stream(req *http.Request, ch chan<- CompletionEvent) {
-	resp, err := p.client.Do(req)
-	if err != nil {
-		ch <- CompletionEvent{Type: EventProviderError, Error: fmt.Errorf("http request: %w", err)}
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		ch <- CompletionEvent{
-			Type:  EventProviderError,
-			Error: fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body)),
-		}
-		return
-	}
-
+func (p *openaiProvider) streamFromReader(body io.Reader, ch chan<- CompletionEvent) {
 	// Track tool calls being assembled across chunks
 	toolCalls := map[int]*ToolCallEvent{}
 
-	scanner := bufio.NewScanner(resp.Body)
+	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 256*1024), 256*1024)
 
 	for scanner.Scan() {
