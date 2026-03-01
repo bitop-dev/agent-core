@@ -36,7 +36,7 @@ type agentSpawnTool struct{}
 func (t *agentSpawnTool) Definition() tool.Definition {
 	return tool.Definition{
 		Name:        "agent_spawn",
-		Description: "Spawn a sub-agent to perform a specific task. The sub-agent runs with its own turn loop and returns its text output. Use this to delegate complex sub-tasks.",
+		Description: "Spawn a sub-agent to perform a specific task. Call this tool DIRECTLY (do NOT use bash). The sub-agent runs with its own conversation loop and returns its text output. Use this to delegate complex sub-tasks to specialist agents.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
