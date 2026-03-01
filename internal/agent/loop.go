@@ -221,6 +221,40 @@ func (a *Agent) loop(ctx context.Context, history []provider.Message, ch chan<- 
 			}}
 		}
 
+		// Record tool calls for loop detection and check for patterns
+		for i, result := range results {
+			a.loopDetector.RecordCall(
+				calls[i].Name,
+				string(calls[i].Arguments),
+				result.Content,
+				!result.IsError,
+			)
+		}
+
+		verdict := a.loopDetector.Check()
+		switch verdict.Verdict {
+		case VerdictInjectWarning:
+			// Inject warning as a user message so the LLM sees it
+			ch <- RunEvent{Type: EventLoopDetected, Data: verdict.Message}
+			history = append(history, provider.Message{
+				Role: provider.RoleUser,
+				Content: []provider.ContentBlock{{
+					Type: provider.ContentText,
+					Text: verdict.Message,
+				}},
+			})
+		case VerdictHardStop:
+			ch <- RunEvent{Type: EventLoopDetected, Data: verdict.Message}
+			ch <- RunEvent{Type: EventTurnEnd}
+			ch <- RunEvent{Type: EventAgentEnd, Data: AgentEndData{
+				TotalTurns: totalTurns,
+				StopReason: "loop_detected",
+				DurationMs: time.Since(startTime).Milliseconds(),
+				History:    history,
+			}}
+			return
+		}
+
 		ch <- RunEvent{Type: EventTurnEnd}
 		_ = stopReason
 	}

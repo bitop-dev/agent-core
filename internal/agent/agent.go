@@ -16,11 +16,12 @@ import (
 // Agent is the core runtime. It holds a provider, tool engine, config,
 // skills, and observer, and executes the turn loop when Run is called.
 type Agent struct {
-	config   *config.AgentConfig
-	provider provider.Provider
-	tools    *tool.Engine
-	skills   []*sk.Skill
-	observer observer.Observer
+	config       *config.AgentConfig
+	provider     provider.Provider
+	tools        *tool.Engine
+	skills       []*sk.Skill
+	observer     observer.Observer
+	loopDetector *LoopDetector
 }
 
 // Builder constructs an Agent with all dependencies.
@@ -75,11 +76,12 @@ func (b *Builder) Build() (*Agent, error) {
 		b.tools = tool.NewEngine()
 	}
 	return &Agent{
-		config:   b.config,
-		provider: b.provider,
-		tools:    b.tools,
-		skills:   b.skills,
-		observer: b.observer,
+		config:       b.config,
+		provider:     b.provider,
+		tools:        b.tools,
+		skills:       b.skills,
+		observer:     b.observer,
+		loopDetector: NewLoopDetector(DefaultLoopDetectionConfig()),
 	}, nil
 }
 
